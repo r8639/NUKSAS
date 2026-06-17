@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>備忘錄管理 - ScholarLink</title>
+  <script src="auth.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Source+Sans+3:wght@400;600&display=swap');
+    :root {
+      --bg: #0f172a;
+      --card: #111827;
+      --surface: #0b1220;
+      --accent: #7dd3fc;
+      --accent-strong: #22d3ee;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --border: #1f2937;
+      --shadow: 0 24px 60px rgba(0,0,0,0.35);
+      --radius: 14px;
+      --urgent: #ef4444;
+      --urgent-bg: rgba(239,68,68,0.12);
+      --important: #f59e0b;
+      --important-bg: rgba(245,158,11,0.12);
+      --low: #60a5fa;
+      --low-bg: rgba(96,165,250,0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Source Sans 3', system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.06), transparent 25%),
+                  radial-gradient(circle at 80% 10%, rgba(14,165,233,0.07), transparent 26%),
+                  radial-gradient(circle at 50% 80%, rgba(56,189,248,0.05), transparent 30%),
+                  var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    header {
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(12px);
+      background: rgba(15,23,42,0.8);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav {
+      max-width: 1200px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 22px;
+    }
+    .brand {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; letter-spacing: 0.5px;
+      font-family: 'Space Grotesk', sans-serif;
+    }
+    .brand .dot {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      box-shadow: 0 0 18px rgba(125,211,252,0.6);
+    }
+    nav a {
+      color: var(--muted); text-decoration: none;
+      margin-left: 18px; font-weight: 600; transition: color 0.2s ease;
+    }
+    nav a:hover { color: var(--accent-strong); }
+    nav a.active { color: var(--accent); }
+    .container { max-width: 1200px; margin: 0 auto; padding: 28px 22px 60px; }
+
+    /* 頁面標題列 */
+    .page-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
+    }
+    .page-title { font-family: 'Space Grotesk', sans-serif; font-size: 1.4rem; font-weight: 700; }
+    .page-title span { color: var(--accent); }
+
+    /* 統計卡片 */
+    .stats-row {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px; margin-bottom: 28px;
+    }
+    .stat-card {
+      background: linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 16px 18px; text-align: center;
+    }
+    .stat-card .num { font-size: 1.8rem; font-weight: 700; font-family: 'Space Grotesk', sans-serif; }
+    .stat-card .lbl { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
+
+    /* 篩選列 */
+    .filter-bar {
+      display: flex; align-items: center; gap: 10px;
+      flex-wrap: wrap; margin-bottom: 20px;
+    }
+    .filter-bar select {
+      background: var(--card); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 7px 12px; font-size: 0.88rem; cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .filter-bar select:focus { outline: none; border-color: var(--accent); }
+
+    /* 卡片格線 */
+    .memo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 18px;
+    }
+    .memo-card {
+      background: linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 18px 20px; display: flex; flex-direction: column; gap: 10px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      position: relative;
+    }
+    .memo-card:hover { border-color: rgba(125,211,252,0.3); box-shadow: 0 8px 30px rgba(0,0,0,0.3); }
+    .memo-card.done { opacity: 0.55; }
+    .memo-card.done .memo-title { text-decoration: line-through; color: var(--muted); }
+
+    /* 優先級標籤 */
+    .priority-tag {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 0.75rem; font-weight: 600; padding: 3px 10px;
+      border-radius: 20px; letter-spacing: 0.3px;
+    }
+    .priority-tag.urgent   { background: var(--urgent-bg);    color: var(--urgent);    border: 1px solid rgba(239,68,68,0.3); }
+    .priority-tag.important{ background: var(--important-bg); color: var(--important); border: 1px solid rgba(245,158,11,0.3); }
+    .priority-tag.low      { background: var(--low-bg);       color: var(--low);       border: 1px solid rgba(96,165,250,0.3); }
+
+    .status-tag {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 0.75rem; font-weight: 600; padding: 3px 10px;
+      border-radius: 20px;
+    }
+    .status-tag.todo { background: rgba(99,102,241,0.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); }
+    .status-tag.done { background: rgba(34,197,94,0.12);  color: #4ade80;  border: 1px solid rgba(34,197,94,0.3); }
+
+    .card-tags { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .memo-title { font-size: 1rem; font-weight: 600; color: var(--text); }
+    .memo-content { font-size: 0.88rem; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+    .memo-reminder { font-size: 0.8rem; color: var(--accent); }
+    .memo-meta { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
+    .card-actions { display: flex; gap: 8px; margin-top: 4px; }
+    .btn-edit, .btn-delete, .btn-toggle {
+      padding: 5px 14px; border-radius: 8px; font-size: 0.82rem; font-weight: 600;
+      cursor: pointer; border: none; transition: opacity 0.2s;
+    }
+    .btn-edit   { background: rgba(125,211,252,0.15); color: var(--accent); border: 1px solid rgba(125,211,252,0.3); }
+    .btn-delete { background: rgba(239,68,68,0.12);   color: #f87171;       border: 1px solid rgba(239,68,68,0.3); }
+    .btn-toggle { background: rgba(34,197,94,0.12);   color: #4ade80;       border: 1px solid rgba(34,197,94,0.3); }
+    .btn-edit:hover, .btn-delete:hover, .btn-toggle:hover { opacity: 0.75; }
+
+    /* 新增按鈕 */
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      color: #0f172a; border: none; border-radius: 10px;
+      padding: 10px 22px; font-size: 0.9rem; font-weight: 700;
+      cursor: pointer; transition: opacity 0.2s; white-space: nowrap;
+    }
+    .btn-primary:hover { opacity: 0.85; }
+
+    /* 空狀態 */
+    .empty-state {
+      text-align: center; padding: 60px 20px; color: var(--muted);
+      grid-column: 1 / -1;
+    }
+    .empty-state .icon { font-size: 3rem; margin-bottom: 12px; }
+
+    /* Modal 遮罩 */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+      z-index: 100; align-items: center; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 28px 28px 24px;
+      width: 90%; max-width: 520px; max-height: 90vh;
+      overflow-y: auto; box-shadow: var(--shadow);
+    }
+    .modal-title {
+      font-family: 'Space Grotesk', sans-serif; font-size: 1.1rem;
+      font-weight: 700; margin-bottom: 20px;
+    }
+    .form-group { margin-bottom: 16px; }
+    .form-group label {
+      display: block; font-size: 0.85rem; font-weight: 600;
+      color: var(--muted); margin-bottom: 6px;
+    }
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+      width: 100%; background: var(--surface); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 9px 12px; font-size: 0.9rem; resize: vertical;
+      transition: border-color 0.2s; font-family: inherit;
+    }
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus { outline: none; border-color: var(--accent); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+    .btn-cancel {
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 18px; font-size: 0.88rem; font-weight: 600;
+      cursor: pointer; transition: color 0.2s;
+    }
+    .btn-cancel:hover { color: var(--text); }
+
+    /* 提示訊息 */
+    .toast {
+      position: fixed; bottom: 28px; right: 28px; z-index: 200;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 20px; font-size: 0.9rem;
+      box-shadow: var(--shadow); transform: translateY(20px); opacity: 0;
+      transition: all 0.3s ease; pointer-events: none;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.success { border-color: rgba(34,197,94,0.4); color: #4ade80; }
+    .toast.error   { border-color: rgba(239,68,68,0.4);  color: #f87171; }
+
+    @media (max-width: 640px) {
+      nav a { display: none; }
+      .memo-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="nav">
+    <div class="brand">
+      <div class="dot"></div>
+      ScholarLink
+    </div>
+    <nav>
+      <a href="admin_scholarships.html">獎助管理</a>
+      <a href="admin_announcements.html">公告管理</a>
+      <a href="admin_identity_proof.html">身份文件管理</a>
+      <a href="admin_accounts.html">帳號管理</a>
+      <a href="admin_messages.html">留言審查</a>
+      <a href="admin_memos.html" class="active">備忘錄</a>
+    </nav>
+  </div>
+</header>
+
+<div class="container">
+  <div class="page-header">
+    <div class="page-title">我的<span>備忘錄</span></div>
+    <button class="btn-primary" onclick="openCreateModal()">＋ 新增備忘錄</button>
+  </div>
+
+  <!-- 統計卡片 -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="num" id="statTotal" style="color:var(--accent)">0</div>
+      <div class="lbl">全部</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="statUrgent" style="color:var(--urgent)">0</div>
+      <div class="lbl">緊急</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="statTodo" style="color:#a5b4fc">0</div>
+      <div class="lbl">代辦中</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="statDone" style="color:#4ade80">0</div>
+      <div class="lbl">已完成</div>
+    </div>
+  </div>
+
+  <!-- 篩選列 -->
+  <div class="filter-bar">
+    <select id="filterPriority" onchange="renderMemos()">
+      <option value="">全部優先級</option>
+      <option value="緊急">緊急</option>
+      <option value="重要">重要</option>
+      <option value="沒那麼重要">沒那麼重要</option>
+    </select>
+    <select id="filterStatus" onchange="renderMemos()">
+      <option value="">全部狀態</option>
+      <option value="代辦">代辦</option>
+      <option value="完成">完成</option>
+    </select>
+  </div>
+
+  <!-- 備忘錄卡片格線 -->
+  <div class="memo-grid" id="memoGrid">
+    <div class="empty-state">
+      <div class="icon">📝</div>
+      <div>載入中...</div>
+    </div>
+  </div>
+</div>
+
+<!-- 新增／編輯 Modal -->
+<div class="modal-overlay" id="memoModal">
+  <div class="modal">
+    <div class="modal-title" id="modalTitle">新增備忘錄</div>
+    <input type="hidden" id="editMemoId">
+    <div class="form-group">
+      <label>標題 <span style="color:#f87171">*</span></label>
+      <input type="text" id="inputTitle" placeholder="請輸入備忘錄標題" maxlength="255">
+    </div>
+    <div class="form-group">
+      <label>內容</label>
+      <textarea id="inputContent" rows="4" placeholder="備忘錄詳細內容（選填）"></textarea>
+    </div>
+    <div class="form-group">
+      <label>優先級</label>
+      <select id="inputPriority">
+        <option value="緊急">🔴 緊急</option>
+        <option value="重要" selected>🟡 重要</option>
+        <option value="沒那麼重要">🔵 沒那麼重要</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>狀態</label>
+      <select id="inputStatus">
+        <option value="代辦" selected>代辦</option>
+        <option value="完成">完成</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>提醒日期（選填）</label>
+      <input type="date" id="inputReminder">
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn-primary" onclick="submitMemo()">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 提示訊息 -->
+<div class="toast" id="toast"></div>
+
+<script>
+  // ── 身份驗證 ──────────────────────────────────────────
+  (function() {
+    try {
+      const userStr = sessionStorage.getItem('currentUser');
+      console.log('[Auth] currentUser raw:', userStr);
+      if (!userStr) {
+        alert('⚠️ 請先登入系統！');
+        window.location.href = 'login.html';
+        return;
+      }
+      const user = JSON.parse(userStr);
+      const allowedRoles = ['systemadministrator', 'admin'];
+      const userRole = (user.type || user.role || '').toLowerCase().trim();
+      console.log('[Auth] userRole:', userRole, '| allowedRoles:', allowedRoles);
+      if (!allowedRoles.includes(userRole)) {
+        alert(`⚠️ 權限不足（讀到 type="${user.type}"），僅限系統管理員存取此頁面。`);
+        window.location.href = 'login.html';
+        return;
+      }
+      window._authUser = user;
+      console.log('[Auth] 通過，adminId:', user.id);
+    } catch (e) {
+      console.error('[Auth] 例外：', e);
+      window.location.href = 'login.html';
+    }
+  })();
+  const adminId = (window._authUser || {}).id;
+
+  // ── 狀態 ─────────────────────────────────────────────
+  let allMemos = [];
+
+  // ── API 端點（優先使用 Express，XAMPP 模式可改為 PHP）──
+  function apiBase() {
+    return location.port === '3000'
+      ? '/api'
+      : '/scholarship/api/index.php';
+  }
+
+  // ── 載入備忘錄 ────────────────────────────────────────
+  async function loadMemos() {
+    try {
+      const res  = await fetch(`${apiBase()}/memos?admin_id=${encodeURIComponent(adminId)}`);
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message);
+      allMemos = json.data || [];
+      updateStats();
+      renderMemos();
+    } catch (e) {
+      showToast('載入備忘錄失敗：' + e.message, 'error');
+      document.getElementById('memoGrid').innerHTML =
+        '<div class="empty-state"><div class="icon">❌</div><div>載入失敗，請稍後再試</div></div>';
+    }
+  }
+
+  // ── 統計更新 ──────────────────────────────────────────
+  function updateStats() {
+    document.getElementById('statTotal').textContent  = allMemos.length;
+    document.getElementById('statUrgent').textContent = allMemos.filter(m => m.priority === '緊急').length;
+    document.getElementById('statTodo').textContent   = allMemos.filter(m => m.status === '代辦').length;
+    document.getElementById('statDone').textContent   = allMemos.filter(m => m.status === '完成').length;
+  }
+
+  // ── 渲染卡片 ──────────────────────────────────────────
+  function renderMemos() {
+    const grid       = document.getElementById('memoGrid');
+    const fPriority  = document.getElementById('filterPriority').value;
+    const fStatus    = document.getElementById('filterStatus').value;
+
+    const filtered = allMemos.filter(m =>
+      (!fPriority || m.priority === fPriority) &&
+      (!fStatus   || m.status   === fStatus)
+    );
+
+    if (filtered.length === 0) {
+      grid.innerHTML = '<div class="empty-state"><div class="icon">📋</div><div>目前沒有符合條件的備忘錄</div></div>';
+      return;
+    }
+
+    grid.innerHTML = filtered.map(m => {
+      const priorityClass = m.priority === '緊急' ? 'urgent'
+                          : m.priority === '重要'  ? 'important' : 'low';
+      const statusClass   = m.status === '完成' ? 'done' : 'todo';
+      const cardClass     = m.status === '完成' ? 'memo-card done' : 'memo-card';
+      const reminder      = m.reminder_date
+        ? `<div class="memo-reminder">🔔 提醒日期：${m.reminder_date}</div>` : '';
+      const content       = m.content
+        ? `<div class="memo-content">${escHtml(m.content)}</div>` : '';
+      const createdDate   = m.created_time ? m.created_time.split('T')[0] : '';
+      const toggleLabel   = m.status === '完成' ? '↩ 標為代辦' : '✓ 標為完成';
+
+      return `
+      <div class="${cardClass}" id="card-${m.id}">
+        <div class="card-tags">
+          <span class="priority-tag ${priorityClass}">${priorityIcon(m.priority)} ${m.priority}</span>
+          <span class="status-tag ${statusClass}">${m.status}</span>
+        </div>
+        <div class="memo-title">${escHtml(m.title)}</div>
+        ${content}
+        ${reminder}
+        <div class="memo-meta">建立於 ${createdDate}</div>
+        <div class="card-actions">
+          <button class="btn-toggle" onclick="toggleStatus('${m.id}','${m.status === '完成' ? '代辦' : '完成'}')">${toggleLabel}</button>
+          <button class="btn-edit"   onclick="openEditModal(${JSON.stringify(m).replace(/"/g, '&quot;')})">編輯</button>
+          <button class="btn-delete" onclick="deleteMemo('${m.id}')">刪除</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function priorityIcon(p) {
+    return p === '緊急' ? '🔴' : p === '重要' ? '🟡' : '🔵';
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Modal 開關 ────────────────────────────────────────
+  function openCreateModal() {
+    document.getElementById('modalTitle').textContent = '新增備忘錄';
+    document.getElementById('editMemoId').value  = '';
+    document.getElementById('inputTitle').value  = '';
+    document.getElementById('inputContent').value= '';
+    document.getElementById('inputPriority').value = '重要';
+    document.getElementById('inputStatus').value   = '代辦';
+    document.getElementById('inputReminder').value = '';
+    document.getElementById('memoModal').classList.add('open');
+  }
+
+  function openEditModal(memo) {
+    document.getElementById('modalTitle').textContent  = '編輯備忘錄';
+    document.getElementById('editMemoId').value        = memo.id;
+    document.getElementById('inputTitle').value        = memo.title || '';
+    document.getElementById('inputContent').value      = memo.content || '';
+    document.getElementById('inputPriority').value     = memo.priority || '重要';
+    document.getElementById('inputStatus').value       = memo.status   || '代辦';
+    document.getElementById('inputReminder').value     = memo.reminder_date || '';
+    document.getElementById('memoModal').classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('memoModal').classList.remove('open');
+  }
+
+  // 點擊遮罩關閉
+  document.getElementById('memoModal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+  });
+
+  // ── 儲存備忘錄（新增 / 編輯）─────────────────────────
+  async function submitMemo() {
+    const memoId  = document.getElementById('editMemoId').value;
+    const title   = document.getElementById('inputTitle').value.trim();
+    if (!title) { showToast('標題為必填欄位', 'error'); return; }
+
+    const payload = {
+      admin_id:      adminId,
+      title,
+      content:       document.getElementById('inputContent').value.trim() || null,
+      priority:      document.getElementById('inputPriority').value,
+      status:        document.getElementById('inputStatus').value,
+      reminder_date: document.getElementById('inputReminder').value || null,
+    };
+
+    try {
+      const isEdit = !!memoId;
+      const url    = isEdit ? `${apiBase()}/memos/${memoId}` : `${apiBase()}/memos`;
+      const method = isEdit ? 'PUT' : 'POST';
+      const res    = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message);
+      showToast(isEdit ? '備忘錄已更新 ✓' : '備忘錄已新增 ✓', 'success');
+      closeModal();
+      await loadMemos();
+    } catch (e) {
+      showToast('操作失敗：' + e.message, 'error');
+    }
+  }
+
+  // ── 快速切換狀態 ──────────────────────────────────────
+  async function toggleStatus(memoId, newStatus) {
+    try {
+      const res  = await fetch(`${apiBase()}/memos/${memoId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ admin_id: adminId, status: newStatus }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message);
+      showToast(newStatus === '完成' ? '已標記為完成 ✓' : '已標記為代辦 ↩', 'success');
+      await loadMemos();
+    } catch (e) {
+      showToast('更新失敗：' + e.message, 'error');
+    }
+  }
+
+  // ── 刪除備忘錄 ────────────────────────────────────────
+  async function deleteMemo(memoId) {
+    if (!confirm('確定要刪除這則備忘錄嗎？此操作無法復原。')) return;
+    try {
+      const res  = await fetch(`${apiBase()}/memos/${memoId}?admin_id=${encodeURIComponent(adminId)}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message);
+      showToast('備忘錄已刪除', 'success');
+      await loadMemos();
+    } catch (e) {
+      showToast('刪除失敗：' + e.message, 'error');
+    }
+  }
+
+  // ── Toast 提示 ────────────────────────────────────────
+  let toastTimer;
+  function showToast(msg, type = 'success') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className   = `toast ${type} show`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  }
+
+  // ── 初始化 ────────────────────────────────────────────
+  loadMemos();
+</script>
+</body>
+</html>

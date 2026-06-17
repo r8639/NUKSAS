@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>師生留言板 - ScholarLink</title>
+  <script src="auth.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Source+Sans+3:wght@400;600&display=swap');
+    :root {
+      --bg: #0f172a;
+      --card: #111827;
+      --surface: #0b1220;
+      --accent: #7dd3fc;
+      --accent-strong: #22d3ee;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --border: #1f2937;
+      --shadow: 0 24px 60px rgba(0,0,0,0.35);
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Source Sans 3', system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.06), transparent 25%),
+                  radial-gradient(circle at 80% 10%, rgba(14,165,233,0.07), transparent 26%),
+                  radial-gradient(circle at 50% 80%, rgba(56,189,248,0.05), transparent 30%),
+                  var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    header {
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(12px);
+      background: rgba(15,23,42,0.8);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav {
+      max-width: 1200px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 22px;
+    }
+    .brand {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; letter-spacing: 0.5px;
+      font-family: 'Space Grotesk', sans-serif;
+    }
+    .brand .dot {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      box-shadow: 0 0 18px rgba(125,211,252,0.6);
+    }
+    nav a {
+      color: var(--muted); text-decoration: none;
+      margin-left: 18px; font-weight: 600;
+      transition: color 0.2s ease;
+    }
+    nav a:hover, nav a.active { color: var(--accent-strong); }
+    .container { max-width: 860px; margin: 0 auto; padding: 24px 20px 60px; }
+    .hero {
+      margin: 28px 0 20px; padding: 26px; border-radius: 16px;
+      background: linear-gradient(120deg, rgba(14,165,233,0.25), rgba(8,47,73,0.65)),
+                  linear-gradient(180deg, rgba(15,23,42,0.9), rgba(15,23,42,0.8));
+      border: 1px solid rgba(125,211,252,0.35);
+      box-shadow: var(--shadow); display: grid; gap: 8px;
+    }
+    .hero h1 { margin: 0; font-size: 26px; }
+    .hero p { margin: 0; color: var(--muted); font-size: 14px; }
+    .card {
+      background: linear-gradient(145deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 18px;
+    }
+    .section-title {
+      font-family: 'Space Grotesk', sans-serif; font-size: 18px; font-weight: 700;
+      margin: 0 0 16px; display: flex; align-items: center; gap: 10px;
+    }
+    .pill {
+      padding: 3px 9px; border-radius: 999px; font-size: 11px;
+      background: rgba(125,211,252,0.15); color: var(--accent-strong);
+      border: 1px solid rgba(125,211,252,0.35);
+    }
+    form { display: grid; gap: 12px; }
+    label { font-size: 13px; font-weight: 600; color: var(--text); }
+    input[type="text"], textarea, select {
+      width: 100%; padding: 10px 12px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--text); font-size: 14px; font-family: inherit;
+    }
+    textarea { min-height: 100px; resize: vertical; }
+    input[type="text"]:focus, textarea:focus, select:focus {
+      outline: none; border-color: var(--accent-strong);
+    }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .btn {
+      padding: 10px 16px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--card); color: var(--text); cursor: pointer;
+      font-weight: 700; font-family: 'Space Grotesk', sans-serif;
+      letter-spacing: 0.2px; transition: all 0.2s; font-size: 14px;
+    }
+    .btn:hover { border-color: var(--accent-strong); color: var(--accent-strong); }
+    .btn.primary {
+      background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+      color: #0b1220; border: none;
+      box-shadow: 0 8px 28px rgba(34,211,238,0.25);
+    }
+    .btn.primary:hover { transform: translateY(-1px); }
+    .btn.danger {
+      background: rgba(244,63,94,0.12); color: #fda4af;
+      border-color: rgba(244,63,94,0.28); font-size: 13px; padding: 7px 12px;
+    }
+    .btn.danger:hover { background: rgba(244,63,94,0.22); }
+    .btn.reply-btn {
+      background: rgba(34,211,238,0.08); color: var(--accent-strong);
+      border-color: rgba(34,211,238,0.3); font-size: 13px; padding: 7px 12px;
+    }
+    .btn.reply-btn:hover { background: rgba(34,211,238,0.18); }
+    #privateTarget { display: none; }
+    .msg-list { display: grid; gap: 16px; }
+    .msg-item {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 16px 18px; background: rgba(255,255,255,0.02);
+      transition: border-color 0.2s;
+    }
+    .msg-item:hover { border-color: rgba(125,211,252,0.2); }
+    .msg-item.private-item { border-color: rgba(251,191,36,0.3); background: rgba(251,191,36,0.03); }
+    .msg-header {
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+    }
+    .msg-title { font-size: 16px; font-weight: 700; color: var(--accent); margin: 0 0 4px; }
+    .msg-meta { font-size: 12px; color: var(--muted); }
+    .badge-private {
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      background: rgba(251,191,36,0.15); color: #fcd34d;
+      border: 1px solid rgba(251,191,36,0.3); font-size: 11px; font-weight: 700;
+      margin-left: 8px;
+    }
+    .msg-content {
+      margin: 10px 0 12px; font-size: 14px;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .msg-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .msg-reply {
+      margin-top: 10px; padding: 10px 14px;
+      background: rgba(34,211,238,0.06); border-radius: 10px;
+      border-left: 3px solid var(--accent-strong);
+      font-size: 13px;
+    }
+    .msg-reply .reply-header { color: var(--accent-strong); font-weight: 700; margin-bottom: 4px; }
+    .msg-reply .reply-body { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+    .reply-form { margin-top: 12px; display: none; }
+    .reply-form.open { display: grid; gap: 8px; }
+    .empty { text-align: center; color: var(--muted); padding: 36px 0; }
+    footer {
+      margin-top: 40px; color: var(--muted); font-size: 13px;
+      text-align: center; padding: 20px 0 40px;
+    }
+    @media (max-width: 620px) {
+      .form-row { grid-template-columns: 1fr; }
+      nav a { font-size: 13px; margin-left: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="nav">
+      <div class="brand"><span class="dot"></span>ScholarLink</div>
+      <nav id="mainNav">
+        <!-- 依角色動態填入 -->
+        <a href="message_board.html" class="active">留言板</a>
+        <a href="/scholarship/pages/login.html" id="logoutLink">登出</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <section class="hero">
+      <h1>📋 留言板</h1>
+      <p id="heroBadge">與老師、學校單位溝通的橋樑。公開留言所有人可見；私密留言僅雙方可見。</p>
+    </section>
+
+    <!-- 發言表單 -->
+    <section class="card" id="postFormSection">
+      <div class="section-title">✏️ 發表留言 <span class="pill">New</span></div>
+      <form id="postForm" onsubmit="submitPost(event)">
+        <div>
+          <label>標題 *</label>
+          <input type="text" id="postTitle" required placeholder="請輸入留言標題" maxlength="255">
+        </div>
+        <div>
+          <label>內容 *</label>
+          <textarea id="postContent" required placeholder="輸入留言內容..."></textarea>
+        </div>
+        <div class="form-row">
+          <div>
+            <label>可見度</label>
+            <select id="postVisibility" onchange="onVisibilityChange()">
+              <option value="Public">🌐 公開（所有人可見）</option>
+              <option value="Private">🔒 私密（僅指定對象）</option>
+            </select>
+          </div>
+          <div id="privateTarget">
+            <label>指定對象 ID *</label>
+            <input type="text" id="postTargetId" placeholder="輸入對象的使用者 ID">
+          </div>
+        </div>
+        <div>
+          <button type="submit" class="btn primary">📤 發布留言</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- 留言列表 -->
+    <section class="card">
+      <div class="section-title">💬 留言列表</div>
+      <div class="msg-list" id="msgList">
+        <div class="empty">載入中...</div>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    ScholarLink © 2026 ·
+    <a href="/scholarship/pages/login.html" style="color:var(--accent-strong); text-decoration:none;">返回登入頁</a>
+  </footer>
+
+  <script>
+    const API_BASE = '/scholarship/api';
+    let currentUser = null;
+
+    // ── 初始化 ──────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      currentUser = checkAuth(['Student', 'Teacher', 'Organization']);
+      if (!currentUser) return;
+
+      // 根據角色設定導航
+      buildNav();
+      loadMessages();
+    });
+
+    function buildNav() {
+      const nav = document.getElementById('mainNav');
+      let links = '';
+      if (currentUser.type === 'Student') {
+        links = `
+          <a href="student_dashboard.html">獎學金公告</a>
+          <a href="student_apply.html">申請獎學金</a>
+          <a href="student_results.html">申請結果</a>`;
+      } else if (currentUser.type === 'Teacher') {
+        links = `
+          <a href="/scholarship/pages/teacher_students.html">學生列表</a>
+          <a href="/scholarship/pages/teacher_recommender.html">推薦信管理</a>`;
+      } else if (currentUser.type === 'Organization') {
+        links = `
+          <a href="/scholarship/pages/organization_applications.html">待審申請</a>
+          <a href="/scholarship/pages/organization_review.html">審查作業</a>`;
+      }
+      nav.innerHTML = links +
+        `<a href="message_board.html" class="active">留言板</a>
+         <a href="/scholarship/pages/login.html">登出</a>`;
+    }
+
+    // ── 可見度切換 ─────────────────────────────────────────────
+    function onVisibilityChange() {
+      const vis = document.getElementById('postVisibility').value;
+      const target = document.getElementById('privateTarget');
+      target.style.display = vis === 'Private' ? 'block' : 'none';
+      document.getElementById('postTargetId').required = vis === 'Private';
+    }
+
+    // ── 發布留言 ───────────────────────────────────────────────
+    async function submitPost(event) {
+      event.preventDefault();
+      const title      = document.getElementById('postTitle').value.trim();
+      const content    = document.getElementById('postContent').value.trim();
+      const visibility = document.getElementById('postVisibility').value;
+      const targetId   = document.getElementById('postTargetId').value.trim();
+
+      if (!title || !content) { alert('請填寫標題與內容'); return; }
+      if (visibility === 'Private' && !targetId) {
+        alert('私密留言請填寫指定對象 ID'); return;
+      }
+
+      const btn = event.submitter;
+      btn.disabled = true; btn.textContent = '發布中...';
+      try {
+        const res = await fetch(`${API_BASE}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: currentUser.id,
+            title, content, visibility,
+            target_user_id: visibility === 'Private' ? targetId : null
+          })
+        });
+        const result = await res.json();
+        if (!res.ok || !result.success) throw new Error(result.message || '發布失敗');
+        document.getElementById('postForm').reset();
+        document.getElementById('privateTarget').style.display = 'none';
+        await loadMessages();
+      } catch (err) {
+        alert(err.message || '發布失敗');
+      } finally {
+        btn.disabled = false; btn.textContent = '📤 發布留言';
+      }
+    }
+
+    // ── 載入留言列表 ───────────────────────────────────────────
+    async function loadMessages() {
+      try {
+        const res = await fetch(`${API_BASE}/messages?viewer_id=${encodeURIComponent(currentUser.id)}`);
+        const result = await res.json();
+        if (!result.success) throw new Error(result.message || '載入失敗');
+        renderMessages(result.data || []);
+      } catch (err) {
+        document.getElementById('msgList').innerHTML =
+          `<div class="empty" style="color:#f87171;">${err.message || '載入失敗'}</div>`;
+      }
+    }
+
+    // ── 渲染留言列表 ───────────────────────────────────────────
+    function renderMessages(items) {
+      const list = document.getElementById('msgList');
+      if (!items.length) {
+        list.innerHTML = '<div class="empty">目前沒有留言，搶先發言吧！</div>';
+        return;
+      }
+
+      list.innerHTML = items.map(m => {
+        const createdAt = m.created_at ? new Date(m.created_at).toLocaleString('zh-TW') : '-';
+        const isPrivate = m.visibility === 'Private';
+        const privBadge = isPrivate
+          ? `<span class="badge-private">🔒 私密${m.target_user_name ? '（→ ' + escHtml(m.target_user_name) + '）' : ''}</span>`
+          : '';
+
+        // 智慧回覆：Teacher/Organization 可回覆任何留言；留言發起人也可補充
+        const canReply = currentUser.type === 'Teacher'
+                      || currentUser.type === 'Organization'
+                      || currentUser.id === m.user_id;
+
+        // 智慧刪除：僅留言發起人（一般使用者）可刪自己的留言
+        const canDelete = currentUser.id === m.user_id;
+
+        const replyHtml = m.reply_content
+          ? `<div class="msg-reply">
+               <div class="reply-header">💬 ${escHtml(m.reply_user_name || '回覆者')}　<span style="color:var(--muted);font-weight:400;">${m.replied_at ? new Date(m.replied_at).toLocaleString('zh-TW') : ''}</span></div>
+               <div class="reply-body">${escHtml(m.reply_content)}</div>
+             </div>`
+          : '';
+
+        const replyFormHtml = canReply
+          ? `<div class="reply-form" id="replyForm_${m.id}">
+               <textarea id="replyContent_${m.id}" placeholder="輸入回覆內容..." rows="3"></textarea>
+               <div style="display:flex; gap:8px;">
+                 <button class="btn primary" style="font-size:13px; padding:8px 14px;"
+                   onclick="submitReply('${m.id}')">送出回覆</button>
+                 <button class="btn" style="font-size:13px; padding:8px 14px;"
+                   onclick="toggleReplyForm('${m.id}')">取消</button>
+               </div>
+             </div>`
+          : '';
+
+        const actionsHtml = (canReply || canDelete)
+          ? `<div class="msg-actions">
+               ${canReply ? `<button class="btn reply-btn" onclick="toggleReplyForm('${m.id}')">💬 回覆留言</button>` : ''}
+               ${canDelete ? `<button class="btn danger" onclick="deleteMessage('${m.id}', this)">❌ 刪除留言</button>` : ''}
+             </div>`
+          : '';
+
+        return `
+          <div class="msg-item ${isPrivate ? 'private-item' : ''}" id="msg_${m.id}">
+            <div class="msg-header">
+              <div>
+                <p class="msg-title">${escHtml(m.title || '（無標題）')}${privBadge}</p>
+                <p class="msg-meta">🧑 ${escHtml(m.author_name || m.user_id)} &nbsp;·&nbsp; 🕐 ${createdAt}</p>
+              </div>
+            </div>
+            <div class="msg-content">${escHtml(m.content || '')}</div>
+            ${replyHtml}
+            ${actionsHtml}
+            ${replyFormHtml}
+          </div>
+        `;
+      }).join('');
+    }
+
+    // ── 顯示/隱藏回覆框 ────────────────────────────────────────
+    function toggleReplyForm(msgId) {
+      const form = document.getElementById(`replyForm_${msgId}`);
+      if (!form) return;
+      form.classList.toggle('open');
+    }
+
+    // ── 送出回覆 ───────────────────────────────────────────────
+    async function submitReply(msgId) {
+      const textarea = document.getElementById(`replyContent_${msgId}`);
+      const content  = textarea ? textarea.value.trim() : '';
+      if (!content) { alert('請輸入回覆內容'); return; }
+
+      try {
+        const res = await fetch(`${API_BASE}/messages/${msgId}/reply`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reply_user_id: currentUser.id, reply_content: content })
+        });
+        const result = await res.json();
+        if (!res.ok || !result.success) throw new Error(result.message || '回覆失敗');
+        await loadMessages();
+      } catch (err) {
+        alert(err.message || '回覆失敗');
+      }
+    }
+
+    // ── 刪除留言 ───────────────────────────────────────────────
+    async function deleteMessage(msgId, btn) {
+      if (!confirm('確定要刪除這則留言嗎？')) return;
+      btn.disabled = true; btn.textContent = '刪除中...';
+      try {
+        const res = await fetch(`${API_BASE}/messages/${msgId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operator_id: currentUser.id })
+        });
+        const result = await res.json();
+        if (!res.ok || !result.success) throw new Error(result.message || '刪除失敗');
+        document.getElementById(`msg_${msgId}`)?.remove();
+        if (!document.querySelectorAll('.msg-item').length) {
+          document.getElementById('msgList').innerHTML =
+            '<div class="empty">目前沒有留言，搶先發言吧！</div>';
+        }
+      } catch (err) {
+        alert(err.message || '刪除失敗');
+        btn.disabled = false; btn.textContent = '❌ 刪除留言';
+      }
+    }
+
+    // ── 工具函式 ───────────────────────────────────────────────
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+  </script>
+</body>
+</html>

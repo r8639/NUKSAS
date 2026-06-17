@@ -5,4 +5,4 @@
 http://localhost/scholarship/pages/login.html
 
 tailscale
-http://100.108.234.127/scholarship/pages/login.html
+http://100.108.234.127/scholarship/pages/login.html 

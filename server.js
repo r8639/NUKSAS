@@ -439,6 +439,343 @@ app.post('/api/application', async (req, res) => {
 });
 
 // ============================================
+// 師生留言板 API 路由
+// ============================================
+
+// GET /api/messages - 取得留言列表（智慧隱私安全篩選）
+app.get('/api/messages', async (req, res) => {
+  try {
+    const viewerId = req.query.viewer_id;
+    if (!viewerId) {
+      return res.status(400).json({ success: false, message: '缺少 viewer_id 參數' });
+    }
+
+    const [rows] = await promisePool.query(`
+      SELECT
+        m.id,
+        m.user_id,
+        m.title,
+        m.content,
+        m.visibility,
+        m.target_user_id,
+        m.reply_content,
+        m.reply_user_id,
+        m.created_at,
+        m.replied_at,
+        u.name  AS author_name,
+        ru.name AS reply_user_name,
+        tu.name AS target_user_name
+      FROM Message m
+      JOIN User u ON m.user_id = u.id
+      LEFT JOIN User ru ON m.reply_user_id = ru.id
+      LEFT JOIN User tu ON m.target_user_id = tu.id
+      WHERE m.visibility = 'Public'
+         OR m.user_id = ?
+         OR m.target_user_id = ?
+      ORDER BY m.created_at DESC
+    `, [viewerId, viewerId]);
+
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('取得留言列表錯誤:', error);
+    res.status(500).json({ success: false, message: '伺服器錯誤', error: error.message });
+  }
+});
+
+// POST /api/messages - 新增留言
+app.post('/api/messages', async (req, res) => {
+  try {
+    const { user_id, title, content, visibility, target_user_id } = req.body;
+
+    if (!user_id || !title || !content) {
+      return res.status(400).json({ success: false, message: 'user_id、title 與 content 為必填欄位' });
+    }
+    const vis = visibility || 'Public';
+    if (!['Public', 'Private'].includes(vis)) {
+      return res.status(400).json({ success: false, message: "visibility 必須為 'Public' 或 'Private'" });
+    }
+    if (vis === 'Private' && !target_user_id) {
+      return res.status(400).json({ success: false, message: '私密留言必須指定 target_user_id' });
+    }
+
+    // SystemAdministrator 不可發言
+    const [userRows] = await promisePool.query('SELECT type FROM User WHERE id = ?', [user_id]);
+    if (userRows.length === 0) {
+      return res.status(404).json({ success: false, message: '找不到使用者' });
+    }
+    if (userRows[0].type === 'SystemAdministrator') {
+      return res.status(403).json({ success: false, message: '系統管理員不可發表留言' });
+    }
+
+    const messageId = 'MSG' + Date.now();
+    await promisePool.query(
+      'INSERT INTO Message (id, user_id, title, content, visibility, target_user_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [messageId, user_id, title, content, vis, target_user_id || null]
+    );
+
+    res.json({ success: true, message: '留言發布成功', data: { id: messageId } });
+  } catch (error) {
+    console.error('新增留言錯誤:', error);
+    res.status(500).json({ success: false, message: '新增留言失敗', error: error.message });
+  }
+});
+
+// PUT /api/messages/:id/reply - 回覆留言（智慧回覆權限防禦）
+app.put('/api/messages/:id/reply', async (req, res) => {
+  try {
+    const messageId = req.params.id;
+    const { reply_user_id, reply_content } = req.body;
+
+    if (!reply_user_id || !reply_content) {
+      return res.status(400).json({ success: false, message: 'reply_user_id 與 reply_content 為必填欄位' });
+    }
+
+    const [msgRows] = await promisePool.query('SELECT user_id FROM Message WHERE id = ?', [messageId]);
+    if (msgRows.length === 0) {
+      return res.status(404).json({ success: false, message: '找不到指定留言' });
+    }
+    const messageOwnerId = msgRows[0].user_id;
+
+    const [userRows] = await promisePool.query('SELECT type FROM User WHERE id = ?', [reply_user_id]);
+    if (userRows.length === 0) {
+      return res.status(404).json({ success: false, message: '找不到回覆者' });
+    }
+    const replyUserType = userRows[0].type;
+
+    const isTeacherOrOrg = replyUserType === 'Teacher' || replyUserType === 'Organization';
+    const isOriginalAuthor = reply_user_id === messageOwnerId;
+
+    if (!isTeacherOrOrg && !isOriginalAuthor) {
+      return res.status(403).json({ success: false, message: '您沒有回覆此留言的權限' });
+    }
+
+    await promisePool.query(
+      'UPDATE Message SET reply_content = ?, reply_user_id = ?, replied_at = NOW() WHERE id = ?',
+      [reply_content, reply_user_id, messageId]
+    );
+
+    res.json({ success: true, message: '回覆成功' });
+  } catch (error) {
+    console.error('回覆留言錯誤:', error);
+    res.status(500).json({ success: false, message: '回覆失敗', error: error.message });
+  }
+});
+
+// DELETE /api/messages/:id - 刪除留言（智慧刪除權限防禦）
+app.delete('/api/messages/:id', async (req, res) => {
+  try {
+    const messageId = req.params.id;
+    const operatorId = req.body.operator_id;
+
+    if (!operatorId) {
+      return res.status(400).json({ success: false, message: '缺少 operator_id 參數' });
+    }
+
+    const [msgRows] = await promisePool.query('SELECT user_id, visibility FROM Message WHERE id = ?', [messageId]);
+    if (msgRows.length === 0) {
+      return res.status(404).json({ success: false, message: '找不到指定留言' });
+    }
+    const { user_id: authorId, visibility } = msgRows[0];
+
+    const [operatorRows] = await promisePool.query('SELECT type FROM User WHERE id = ?', [operatorId]);
+    if (operatorRows.length === 0) {
+      return res.status(404).json({ success: false, message: '找不到操作者資訊' });
+    }
+    const operatorType = operatorRows[0].type;
+
+    const isAdmin = operatorType === 'SystemAdministrator';
+    const isAuthor = operatorId === authorId;
+
+    if (isAdmin && visibility !== 'Public') {
+      return res.status(403).json({ success: false, message: '管理員只能刪除公開留言' });
+    }
+    if (!isAdmin && !isAuthor) {
+      return res.status(403).json({ success: false, message: '您沒有刪除此留言的權限' });
+    }
+
+    await promisePool.query('DELETE FROM Message WHERE id = ?', [messageId]);
+    res.json({ success: true, message: '留言已刪除' });
+  } catch (error) {
+    console.error('刪除留言錯誤:', error);
+    res.status(500).json({ success: false, message: '刪除失敗', error: error.message });
+  }
+});
+
+// ============================================
+// 管理員備忘錄 API 路由
+// ============================================
+
+// GET /api/memos?admin_id=xxx - 取得指定管理員的所有備忘錄
+app.get('/api/memos', async (req, res) => {
+  try {
+    const { admin_id } = req.query;
+    if (!admin_id) {
+      return res.status(400).json({ success: false, message: '缺少 admin_id 參數' });
+    }
+
+    // 防禦性檢查：確認是 SystemAdministrator
+    const [userRows] = await promisePool.query(
+      'SELECT type FROM User WHERE id = ? LIMIT 1',
+      [admin_id]
+    );
+    if (userRows.length === 0 || userRows[0].type !== 'SystemAdministrator') {
+      return res.status(403).json({ success: false, message: '權限不足，僅限系統管理員存取' });
+    }
+
+    const [rows] = await promisePool.query(
+      `SELECT id, admin_id, title, content, priority, status, reminder_date, created_time
+       FROM Admin_Memo
+       WHERE admin_id = ?
+       ORDER BY
+         CASE priority
+           WHEN '緊急'     THEN 1
+           WHEN '重要'     THEN 2
+           WHEN '沒那麼重要' THEN 3
+           ELSE 4
+         END,
+         created_time DESC`,
+      [admin_id]
+    );
+
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('取得備忘錄錯誤:', error);
+    res.status(500).json({ success: false, message: '伺服器錯誤', error: error.message });
+  }
+});
+
+// POST /api/memos - 新增備忘錄
+app.post('/api/memos', async (req, res) => {
+  try {
+    const { admin_id, title, content, priority, status, reminder_date } = req.body;
+
+    if (!admin_id || !title) {
+      return res.status(400).json({ success: false, message: '缺少必填欄位：admin_id、title' });
+    }
+
+    // 防禦性檢查：確認是 SystemAdministrator
+    const [userRows] = await promisePool.query(
+      'SELECT type FROM User WHERE id = ? LIMIT 1',
+      [admin_id]
+    );
+    if (userRows.length === 0 || userRows[0].type !== 'SystemAdministrator') {
+      return res.status(403).json({ success: false, message: '權限不足，僅限系統管理員存取' });
+    }
+
+    const id = 'MEMO' + Date.now();
+    const finalPriority = priority || '重要';
+    const finalStatus   = status   || '代辦';
+    const finalReminder = reminder_date || null;
+
+    await promisePool.query(
+      `INSERT INTO Admin_Memo (id, admin_id, title, content, priority, status, reminder_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, admin_id, title, content || null, finalPriority, finalStatus, finalReminder]
+    );
+
+    res.status(201).json({ success: true, message: '備忘錄新增成功', data: { id } });
+  } catch (error) {
+    console.error('新增備忘錄錯誤:', error);
+    res.status(500).json({ success: false, message: '伺服器錯誤', error: error.message });
+  }
+});
+
+// PUT /api/memos/:id - 編輯備忘錄
+app.put('/api/memos/:id', async (req, res) => {
+  try {
+    const memoId = req.params.id;
+    const { admin_id, title, content, priority, status, reminder_date } = req.body;
+
+    if (!admin_id) {
+      return res.status(400).json({ success: false, message: '缺少 admin_id 參數' });
+    }
+
+    // 防禦性檢查：確認是 SystemAdministrator
+    const [userRows] = await promisePool.query(
+      'SELECT type FROM User WHERE id = ? LIMIT 1',
+      [admin_id]
+    );
+    if (userRows.length === 0 || userRows[0].type !== 'SystemAdministrator') {
+      return res.status(403).json({ success: false, message: '權限不足，僅限系統管理員存取' });
+    }
+
+    // 確認備忘錄存在且屬於此管理員
+    const [memoRows] = await promisePool.query(
+      'SELECT admin_id FROM Admin_Memo WHERE id = ? LIMIT 1',
+      [memoId]
+    );
+    if (memoRows.length === 0) {
+      return res.status(404).json({ success: false, message: '找不到指定備忘錄' });
+    }
+    if (memoRows[0].admin_id !== admin_id) {
+      return res.status(403).json({ success: false, message: '您沒有權限修改此備忘錄' });
+    }
+
+    const fields = [];
+    const values = [];
+    if (title         !== undefined) { fields.push('title = ?');         values.push(title); }
+    if (content       !== undefined) { fields.push('content = ?');       values.push(content); }
+    if (priority      !== undefined) { fields.push('priority = ?');      values.push(priority); }
+    if (status        !== undefined) { fields.push('status = ?');        values.push(status); }
+    if (reminder_date !== undefined) { fields.push('reminder_date = ?'); values.push(reminder_date || null); }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ success: false, message: '沒有可更新的欄位' });
+    }
+
+    values.push(memoId);
+    await promisePool.query(
+      `UPDATE Admin_Memo SET ${fields.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    res.json({ success: true, message: '備忘錄更新成功' });
+  } catch (error) {
+    console.error('編輯備忘錄錯誤:', error);
+    res.status(500).json({ success: false, message: '伺服器錯誤', error: error.message });
+  }
+});
+
+// DELETE /api/memos/:id?admin_id=xxx - 刪除備忘錄
+app.delete('/api/memos/:id', async (req, res) => {
+  try {
+    const memoId  = req.params.id;
+    const admin_id = req.query.admin_id;
+
+    if (!admin_id) {
+      return res.status(400).json({ success: false, message: '缺少 admin_id 參數' });
+    }
+
+    // 防禦性檢查：確認是 SystemAdministrator
+    const [userRows] = await promisePool.query(
+      'SELECT type FROM User WHERE id = ? LIMIT 1',
+      [admin_id]
+    );
+    if (userRows.length === 0 || userRows[0].type !== 'SystemAdministrator') {
+      return res.status(403).json({ success: false, message: '權限不足，僅限系統管理員存取' });
+    }
+
+    // 確認備忘錄存在且屬於此管理員
+    const [memoRows] = await promisePool.query(
+      'SELECT admin_id FROM Admin_Memo WHERE id = ? LIMIT 1',
+      [memoId]
+    );
+    if (memoRows.length === 0) {
+      return res.status(404).json({ success: false, message: '找不到指定備忘錄' });
+    }
+    if (memoRows[0].admin_id !== admin_id) {
+      return res.status(403).json({ success: false, message: '您沒有權限刪除此備忘錄' });
+    }
+
+    await promisePool.query('DELETE FROM Admin_Memo WHERE id = ?', [memoId]);
+    res.json({ success: true, message: '備忘錄已刪除' });
+  } catch (error) {
+    console.error('刪除備忘錄錯誤:', error);
+    res.status(500).json({ success: false, message: '伺服器錯誤', error: error.message });
+  }
+});
+
+// ============================================
 // 啟動伺服器
 // ============================================
 

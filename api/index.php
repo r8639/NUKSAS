@@ -1165,6 +1165,406 @@ else if ($method === 'DELETE' && $segments[0] === 'user' && isset($segments[1]) 
     }
 }
 
+// ============================================================
+// 師生留言板路由
+// ============================================================
+
+// 路由: GET /messages - 取得留言列表（智慧隱私安全篩選）
+else if ($method === 'GET' && isset($segments[0]) && $segments[0] === 'messages' && count($segments) === 1) {
+    $viewerId = $_GET['viewer_id'] ?? null;
+    if (!$viewerId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少 viewer_id 參數']);
+        exit;
+    }
+    try {
+        $stmt = $pdo->prepare("
+            SELECT
+                m.id,
+                m.user_id,
+                m.title,
+                m.content,
+                m.visibility,
+                m.target_user_id,
+                m.reply_content,
+                m.reply_user_id,
+                m.created_at,
+                m.replied_at,
+                u.name  AS author_name,
+                ru.name AS reply_user_name,
+                tu.name AS target_user_name
+            FROM Message m
+            JOIN User u ON m.user_id = u.id
+            LEFT JOIN User ru ON m.reply_user_id = ru.id
+            LEFT JOIN User tu ON m.target_user_id = tu.id
+            WHERE m.visibility = 'Public'
+               OR m.user_id = ?
+               OR m.target_user_id = ?
+            ORDER BY m.created_at DESC
+        ");
+        $stmt->execute([$viewerId, $viewerId]);
+        $messages = $stmt->fetchAll();
+        echo json_encode(['success' => true, 'data' => $messages]);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+}
+
+// 路由: POST /messages - 新增留言
+else if ($method === 'POST' && isset($segments[0]) && $segments[0] === 'messages' && count($segments) === 1) {
+    $data = json_decode(file_get_contents('php://input'), true);
+
+    if (!isset($data['user_id']) || !isset($data['title']) || !isset($data['content'])) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'user_id、title 與 content 為必填欄位']);
+        exit;
+    }
+    $visibility = $data['visibility'] ?? 'Public';
+    if (!in_array($visibility, ['Public', 'Private'])) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => "visibility 必須為 'Public' 或 'Private'"]);
+        exit;
+    }
+    if ($visibility === 'Private' && empty($data['target_user_id'])) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '私密留言必須指定 target_user_id']);
+        exit;
+    }
+    try {
+        // SystemAdministrator 不可發言
+        $stmt = $pdo->prepare("SELECT type FROM User WHERE id = ?");
+        $stmt->execute([$data['user_id']]);
+        $userRow = $stmt->fetch();
+        if (!$userRow) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '找不到使用者']);
+            exit;
+        }
+        if ($userRow['type'] === 'SystemAdministrator') {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => '系統管理員不可發表留言']);
+            exit;
+        }
+        $messageId = 'MSG' . round(microtime(true) * 1000);
+        $stmt = $pdo->prepare("
+            INSERT INTO Message (id, user_id, title, content, visibility, target_user_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([
+            $messageId,
+            $data['user_id'],
+            $data['title'],
+            $data['content'],
+            $visibility,
+            $data['target_user_id'] ?? null
+        ]);
+        echo json_encode(['success' => true, 'message' => '留言發布成功', 'data' => ['id' => $messageId]]);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+}
+
+// 路由: PUT /messages/{id}/reply - 回覆留言（智慧回覆權限防禦）
+else if ($method === 'PUT' && isset($segments[0]) && $segments[0] === 'messages' && isset($segments[1]) && ($segments[2] ?? '') === 'reply') {
+    $messageId = $segments[1];
+    $data = json_decode(file_get_contents('php://input'), true);
+
+    if (!isset($data['reply_user_id']) || !isset($data['reply_content'])) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'reply_user_id 與 reply_content 為必填欄位']);
+        exit;
+    }
+    try {
+        $stmt = $pdo->prepare("SELECT user_id FROM Message WHERE id = ?");
+        $stmt->execute([$messageId]);
+        $msgRow = $stmt->fetch();
+        if (!$msgRow) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '找不到指定留言']);
+            exit;
+        }
+        $messageOwnerId = $msgRow['user_id'];
+
+        $stmt = $pdo->prepare("SELECT type FROM User WHERE id = ?");
+        $stmt->execute([$data['reply_user_id']]);
+        $userRow = $stmt->fetch();
+        if (!$userRow) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '找不到回覆者']);
+            exit;
+        }
+        $replyUserType = $userRow['type'];
+
+        $isTeacherOrOrg  = $replyUserType === 'Teacher' || $replyUserType === 'Organization';
+        $isOriginalAuthor = $data['reply_user_id'] === $messageOwnerId;
+
+        if (!$isTeacherOrOrg && !$isOriginalAuthor) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => '您沒有回覆此留言的權限']);
+            exit;
+        }
+        $stmt = $pdo->prepare("
+            UPDATE Message SET reply_content = ?, reply_user_id = ?, replied_at = NOW() WHERE id = ?
+        ");
+        $stmt->execute([$data['reply_content'], $data['reply_user_id'], $messageId]);
+        echo json_encode(['success' => true, 'message' => '回覆成功']);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+}
+
+// 路由: DELETE /messages/{id} - 刪除留言（智慧刪除權限防禦）
+else if ($method === 'DELETE' && isset($segments[0]) && $segments[0] === 'messages' && isset($segments[1]) && count($segments) === 2) {
+    $messageId = $segments[1];
+    $data = json_decode(file_get_contents('php://input'), true);
+    $operatorId = $data['operator_id'] ?? null;
+
+    if (!$operatorId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少 operator_id 參數']);
+        exit;
+    }
+    try {
+        $stmt = $pdo->prepare("SELECT user_id, visibility FROM Message WHERE id = ?");
+        $stmt->execute([$messageId]);
+        $msgRow = $stmt->fetch();
+        if (!$msgRow) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '找不到指定留言']);
+            exit;
+        }
+        $authorId   = $msgRow['user_id'];
+        $visibility = $msgRow['visibility'];
+
+        $stmt = $pdo->prepare("SELECT type FROM User WHERE id = ?");
+        $stmt->execute([$operatorId]);
+        $operatorRow = $stmt->fetch();
+        if (!$operatorRow) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '找不到操作者資訊']);
+            exit;
+        }
+        $operatorType = $operatorRow['type'];
+
+        $isAdmin  = $operatorType === 'SystemAdministrator';
+        $isAuthor = $operatorId === $authorId;
+
+        if ($isAdmin && $visibility !== 'Public') {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => '管理員只能刪除公開留言']);
+            exit;
+        }
+        if (!$isAdmin && !$isAuthor) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => '您沒有刪除此留言的權限']);
+            exit;
+        }
+        $stmt = $pdo->prepare("DELETE FROM Message WHERE id = ?");
+        $stmt->execute([$messageId]);
+        echo json_encode(['success' => true, 'message' => '留言已刪除']);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+}
+
+// ============================================================
+// 管理員備忘錄路由
+// ============================================================
+
+// 路由: GET /memos?admin_id=xxx - 取得指定管理員的所有備忘錄
+else if ($method === 'GET' && isset($segments[0]) && $segments[0] === 'memos' && count($segments) === 1) {
+    $adminId = $_GET['admin_id'] ?? null;
+    if (!$adminId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少 admin_id 參數']);
+        exit;
+    }
+
+    // 防禦性檢查：確認是 SystemAdministrator
+    $stmt = $pdo->prepare("SELECT type FROM User WHERE id = ? LIMIT 1");
+    $stmt->execute([$adminId]);
+    $userRow = $stmt->fetch();
+    if (!$userRow || $userRow['type'] !== 'SystemAdministrator') {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => '權限不足，僅限系統管理員存取']);
+        exit;
+    }
+
+    try {
+        $stmt = $pdo->prepare("
+            SELECT id, admin_id, title, content, priority, status, reminder_date, created_time
+            FROM Admin_Memo
+            WHERE admin_id = ?
+            ORDER BY
+                CASE priority
+                    WHEN '緊急'      THEN 1
+                    WHEN '重要'      THEN 2
+                    WHEN '沒那麼重要' THEN 3
+                    ELSE 4
+                END,
+                created_time DESC
+        ");
+        $stmt->execute([$adminId]);
+        $memos = $stmt->fetchAll();
+        echo json_encode(['success' => true, 'data' => $memos]);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
+// 路由: POST /memos - 新增備忘錄
+else if ($method === 'POST' && isset($segments[0]) && $segments[0] === 'memos' && count($segments) === 1) {
+    $data = json_decode(file_get_contents('php://input'), true);
+    $adminId      = $data['admin_id']      ?? null;
+    $title        = $data['title']         ?? null;
+    $content      = $data['content']       ?? null;
+    $priority     = $data['priority']      ?? '重要';
+    $status       = $data['status']        ?? '代辦';
+    $reminderDate = $data['reminder_date'] ?? null;
+
+    if (!$adminId || !$title) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少必填欄位：admin_id、title']);
+        exit;
+    }
+
+    // 防禦性檢查：確認是 SystemAdministrator
+    $stmt = $pdo->prepare("SELECT type FROM User WHERE id = ? LIMIT 1");
+    $stmt->execute([$adminId]);
+    $userRow = $stmt->fetch();
+    if (!$userRow || $userRow['type'] !== 'SystemAdministrator') {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => '權限不足，僅限系統管理員存取']);
+        exit;
+    }
+
+    try {
+        $id = 'MEMO' . round(microtime(true) * 1000);
+        $stmt = $pdo->prepare("
+            INSERT INTO Admin_Memo (id, admin_id, title, content, priority, status, reminder_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([$id, $adminId, $title, $content, $priority, $status, $reminderDate ?: null]);
+        http_response_code(201);
+        echo json_encode(['success' => true, 'message' => '備忘錄新增成功', 'data' => ['id' => $id]]);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
+// 路由: PUT /memos/{id} - 編輯備忘錄
+else if ($method === 'PUT' && isset($segments[0]) && $segments[0] === 'memos' && isset($segments[1]) && count($segments) === 2) {
+    $memoId = $segments[1];
+    $data   = json_decode(file_get_contents('php://input'), true);
+    $adminId = $data['admin_id'] ?? null;
+
+    if (!$adminId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少 admin_id 參數']);
+        exit;
+    }
+
+    // 防禦性檢查：確認是 SystemAdministrator
+    $stmt = $pdo->prepare("SELECT type FROM User WHERE id = ? LIMIT 1");
+    $stmt->execute([$adminId]);
+    $userRow = $stmt->fetch();
+    if (!$userRow || $userRow['type'] !== 'SystemAdministrator') {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => '權限不足，僅限系統管理員存取']);
+        exit;
+    }
+
+    // 確認備忘錄存在且屬於此管理員
+    $stmt = $pdo->prepare("SELECT admin_id FROM Admin_Memo WHERE id = ? LIMIT 1");
+    $stmt->execute([$memoId]);
+    $memoRow = $stmt->fetch();
+    if (!$memoRow) {
+        http_response_code(404);
+        echo json_encode(['success' => false, 'message' => '找不到指定備忘錄']);
+        exit;
+    }
+    if ($memoRow['admin_id'] !== $adminId) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => '您沒有權限修改此備忘錄']);
+        exit;
+    }
+
+    try {
+        $fields = []; $values = [];
+        if (array_key_exists('title',         $data)) { $fields[] = 'title = ?';         $values[] = $data['title']; }
+        if (array_key_exists('content',       $data)) { $fields[] = 'content = ?';       $values[] = $data['content']; }
+        if (array_key_exists('priority',      $data)) { $fields[] = 'priority = ?';      $values[] = $data['priority']; }
+        if (array_key_exists('status',        $data)) { $fields[] = 'status = ?';        $values[] = $data['status']; }
+        if (array_key_exists('reminder_date', $data)) { $fields[] = 'reminder_date = ?'; $values[] = $data['reminder_date'] ?: null; }
+
+        if (empty($fields)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => '沒有可更新的欄位']);
+            exit;
+        }
+
+        $values[] = $memoId;
+        $stmt = $pdo->prepare("UPDATE Admin_Memo SET " . implode(', ', $fields) . " WHERE id = ?");
+        $stmt->execute($values);
+        echo json_encode(['success' => true, 'message' => '備忘錄更新成功']);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
+// 路由: DELETE /memos/{id}?admin_id=xxx - 刪除備忘錄
+else if ($method === 'DELETE' && isset($segments[0]) && $segments[0] === 'memos' && isset($segments[1]) && count($segments) === 2) {
+    $memoId  = $segments[1];
+    $adminId = $_GET['admin_id'] ?? null;
+
+    if (!$adminId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少 admin_id 參數']);
+        exit;
+    }
+
+    // 防禦性檢查：確認是 SystemAdministrator
+    $stmt = $pdo->prepare("SELECT type FROM User WHERE id = ? LIMIT 1");
+    $stmt->execute([$adminId]);
+    $userRow = $stmt->fetch();
+    if (!$userRow || $userRow['type'] !== 'SystemAdministrator') {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => '權限不足，僅限系統管理員存取']);
+        exit;
+    }
+
+    // 確認備忘錄存在且屬於此管理員
+    $stmt = $pdo->prepare("SELECT admin_id FROM Admin_Memo WHERE id = ? LIMIT 1");
+    $stmt->execute([$memoId]);
+    $memoRow = $stmt->fetch();
+    if (!$memoRow) {
+        http_response_code(404);
+        echo json_encode(['success' => false, 'message' => '找不到指定備忘錄']);
+        exit;
+    }
+    if ($memoRow['admin_id'] !== $adminId) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => '您沒有權限刪除此備忘錄']);
+        exit;
+    }
+
+    try {
+        $stmt = $pdo->prepare("DELETE FROM Admin_Memo WHERE id = ?");
+        $stmt->execute([$memoId]);
+        echo json_encode(['success' => true, 'message' => '備忘錄已刪除']);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
 // 路由不匹配
 else {
     http_response_code(404);
