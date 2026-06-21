@@ -142,14 +142,13 @@
       white-space: pre-wrap; word-break: break-word;
     }
     .msg-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-    .msg-reply {
-      margin-top: 10px; padding: 10px 14px;
-      background: rgba(34,211,238,0.06); border-radius: 10px;
-      border-left: 3px solid var(--accent-strong);
-      font-size: 13px;
+    .msg-replies {
+      margin-left: 22px;
+      border-left: 2px solid rgba(125,211,252,0.12);
+      padding-left: 14px;
+      margin-top: 10px;
+      display: grid; gap: 10px;
     }
-    .msg-reply .reply-header { color: var(--accent-strong); font-weight: 700; margin-bottom: 4px; }
-    .msg-reply .reply-body { color: var(--text); white-space: pre-wrap; word-break: break-word; }
     .reply-form { margin-top: 12px; display: none; }
     .reply-form.open { display: grid; gap: 8px; }
     .empty { text-align: center; color: var(--muted); padding: 36px 0; }
@@ -168,9 +167,8 @@
     <div class="nav">
       <div class="brand"><span class="dot"></span>ScholarLink</div>
       <nav id="mainNav">
-        <!-- 依角色動態填入 -->
         <a href="message_board.html" class="active">留言板</a>
-        <a href="/scholarship/pages/login.html" id="logoutLink">登出</a>
+        <a href="/scholarship/pages/login.html" onclick="logout();return false;">登出</a>
       </nav>
     </div>
   </header>
@@ -178,10 +176,10 @@
   <div class="container">
     <section class="hero">
       <h1>📋 留言板</h1>
-      <p id="heroBadge">與老師、學校單位溝通的橋樑。公開留言所有人可見；私密留言僅雙方可見。</p>
+      <p>與老師、學校單位溝通的橋樑。公開留言所有人可見；私密留言僅雙方可見。</p>
     </section>
 
-    <!-- 發言表單 -->
+    <!-- 發言表單（管理員隱藏） -->
     <section class="card" id="postFormSection">
       <div class="section-title">✏️ 發表留言 <span class="pill">New</span></div>
       <form id="postForm" onsubmit="submitPost(event)">
@@ -232,13 +230,13 @@
     const API_BASE = '/scholarship/api';
     let currentUser = null;
 
-    // ── 初始化 ──────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
-      currentUser = checkAuth(['Student', 'Teacher', 'Organization']);
+      currentUser = checkAuth(['Student', 'Teacher', 'Organization', 'SystemAdministrator']);
       if (!currentUser) return;
-
-      // 根據角色設定導航
       buildNav();
+      if (currentUser.type === 'SystemAdministrator') {
+        document.getElementById('postFormSection').style.display = 'none';
+      }
       loadMessages();
     });
 
@@ -258,24 +256,25 @@
         links = `
           <a href="/scholarship/pages/organization_applications.html">待審申請</a>
           <a href="/scholarship/pages/organization_review.html">審查作業</a>`;
+      } else if (currentUser.type === 'SystemAdministrator') {
+        links = `
+          <a href="admin_scholarships.html">獎助管理</a>
+          <a href="admin_announcements.html">公告管理</a>`;
       }
       nav.innerHTML = links +
         `<a href="message_board.html" class="active">留言板</a>
-         <a href="/scholarship/pages/login.html">登出</a>`;
+         <a href="/scholarship/pages/login.html" onclick="logout();return false;">登出</a>`;
     }
 
-    // ── 可見度切換（Private 時懶載入使用者清單）──────────────────
     function onVisibilityChange() {
       const vis = document.getElementById('postVisibility').value;
       const target = document.getElementById('privateTarget');
       target.style.display = vis === 'Private' ? 'block' : 'none';
       const sel = document.getElementById('postTargetSelect');
       sel.required = vis === 'Private';
-      // 首次切到私密才載入清單
       if (vis === 'Private' && sel.options.length <= 1) loadUserList();
     }
 
-    // ── 載入非管理員使用者清單（供私密留言選取對象）─────────────
     async function loadUserList() {
       const sel = document.getElementById('postTargetSelect');
       sel.innerHTML = '<option value="">— 載入中... —</option>';
@@ -292,7 +291,6 @@
       }
     }
 
-    // ── 發布留言 ───────────────────────────────────────────────
     async function submitPost(event) {
       event.preventDefault();
       const title      = document.getElementById('postTitle').value.trim();
@@ -329,7 +327,6 @@
       }
     }
 
-    // ── 載入留言列表 ───────────────────────────────────────────
     async function loadMessages() {
       try {
         const res = await fetch(`${API_BASE}/messages?viewer_id=${encodeURIComponent(currentUser.id)}`);
@@ -342,90 +339,93 @@
       }
     }
 
-    // ── 渲染留言列表 ───────────────────────────────────────────
     function renderMessages(items) {
       const list = document.getElementById('msgList');
       if (!items.length) {
         list.innerHTML = '<div class="empty">目前沒有留言，搶先發言吧！</div>';
         return;
       }
-
-      list.innerHTML = items.map(m => {
-        const createdAt = m.created_at ? new Date(m.created_at).toLocaleString('zh-TW') : '-';
-        const isPrivate = m.visibility === 'Private';
-        const privBadge = isPrivate
-          ? `<span class="badge-private">🔒 私密${m.target_user_name ? '（→ ' + escHtml(m.target_user_name) + '）' : ''}</span>`
-          : '';
-
-        // 智慧回覆：Teacher/Organization 可回覆任何留言；留言發起人也可補充
-        const canReply = currentUser.type === 'Teacher'
-                      || currentUser.type === 'Organization'
-                      || currentUser.id === m.user_id;
-
-        // 智慧刪除：僅留言發起人（一般使用者）可刪自己的留言
-        const canDelete = currentUser.id === m.user_id;
-
-        const replyHtml = m.reply_content
-          ? `<div class="msg-reply">
-               <div class="reply-header">💬 ${escHtml(m.reply_user_name || '回覆者')}　<span style="color:var(--muted);font-weight:400;">${m.replied_at ? new Date(m.replied_at).toLocaleString('zh-TW') : ''}</span></div>
-               <div class="reply-body">${escHtml(m.reply_content)}</div>
-             </div>`
-          : '';
-
-        const replyFormHtml = canReply
-          ? `<div class="reply-form" id="replyForm_${m.id}">
-               <textarea id="replyContent_${m.id}" placeholder="輸入回覆內容..." rows="3"></textarea>
-               <div style="display:flex; gap:8px;">
-                 <button class="btn primary" style="font-size:13px; padding:8px 14px;"
-                   onclick="submitReply('${m.id}')">送出回覆</button>
-                 <button class="btn" style="font-size:13px; padding:8px 14px;"
-                   onclick="toggleReplyForm('${m.id}')">取消</button>
-               </div>
-             </div>`
-          : '';
-
-        const actionsHtml = (canReply || canDelete)
-          ? `<div class="msg-actions">
-               ${canReply ? `<button class="btn reply-btn" onclick="toggleReplyForm('${m.id}')">💬 回覆留言</button>` : ''}
-               ${canDelete ? `<button class="btn danger" onclick="deleteMessage('${m.id}', this)">❌ 刪除留言</button>` : ''}
-             </div>`
-          : '';
-
-        return `
-          <div class="msg-item ${isPrivate ? 'private-item' : ''}" id="msg_${m.id}">
-            <div class="msg-header">
-              <div>
-                <p class="msg-title">${escHtml(m.title || '（無標題）')}${privBadge}</p>
-                <p class="msg-meta">🧑 ${escHtml(m.author_name || m.user_id)} &nbsp;·&nbsp; 🕐 ${createdAt}</p>
-              </div>
-            </div>
-            <div class="msg-content">${escHtml(m.content || '')}</div>
-            ${replyHtml}
-            ${actionsHtml}
-            ${replyFormHtml}
-          </div>
-        `;
-      }).join('');
+      list.innerHTML = items.map(m => renderMessageHtml(m, 0)).join('');
     }
 
-    // ── 顯示/隱藏回覆框 ────────────────────────────────────────
+    function renderMessageHtml(m, depth) {
+      const createdAt = m.created_at ? new Date(m.created_at).toLocaleString('zh-TW') : '-';
+      const isPrivate = m.visibility === 'Private';
+      const privBadge = isPrivate && depth === 0
+        ? `<span class="badge-private">🔒 私密${m.target_user_name ? '（→ ' + escHtml(m.target_user_name) + '）' : ''}</span>`
+        : '';
+      const canDelete = currentUser.id === m.user_id;
+
+      const repliesHtml = (m.replies && m.replies.length)
+        ? `<div class="msg-replies">${m.replies.map(r => renderMessageHtml(r, depth + 1)).join('')}</div>`
+        : '';
+
+      const replyFormHtml = `
+        <div class="reply-form" id="replyForm_${m.id}">
+          <textarea id="replyContent_${m.id}" placeholder="輸入回覆內容..." rows="3"></textarea>
+          <div style="display:flex; gap:8px; margin-top:6px;">
+            <button class="btn primary" style="font-size:13px; padding:8px 14px;"
+              onclick="submitReply('${m.id}')">送出回覆</button>
+            <button class="btn" style="font-size:13px; padding:8px 14px;"
+              onclick="toggleReplyForm('${m.id}')">取消</button>
+          </div>
+        </div>`;
+
+      const actionsHtml = `
+        <div class="msg-actions">
+          <button class="btn reply-btn" onclick="toggleReplyForm('${m.id}')">💬 回覆</button>
+          ${canDelete ? `<button class="btn danger" onclick="deleteMessage('${m.id}', this)">❌ 刪除</button>` : ''}
+        </div>`;
+
+      if (depth > 0) {
+        return `
+          <div class="msg-item" id="msg_${m.id}" style="padding:12px 14px;">
+            <p class="msg-meta" style="margin:0 0 6px;">🧑 ${escHtml(m.author_name || m.user_id)} &nbsp;·&nbsp; 🕐 ${createdAt}</p>
+            <div class="msg-content" style="margin:0 0 8px;">${escHtml(m.content || '')}</div>
+            ${actionsHtml}
+            ${replyFormHtml}
+            ${repliesHtml}
+          </div>`;
+      }
+
+      return `
+        <div class="msg-item ${isPrivate ? 'private-item' : ''}" id="msg_${m.id}">
+          <div class="msg-header">
+            <div>
+              <p class="msg-title">${escHtml(m.title || '（無標題）')}${privBadge}</p>
+              <p class="msg-meta">🧑 ${escHtml(m.author_name || m.user_id)} &nbsp;·&nbsp; 🕐 ${createdAt}</p>
+            </div>
+          </div>
+          <div class="msg-content">${escHtml(m.content || '')}</div>
+          ${actionsHtml}
+          ${replyFormHtml}
+          ${repliesHtml}
+        </div>`;
+    }
+
     function toggleReplyForm(msgId) {
       const form = document.getElementById(`replyForm_${msgId}`);
       if (!form) return;
       form.classList.toggle('open');
+      if (form.classList.contains('open')) {
+        form.querySelector('textarea')?.focus();
+      }
     }
 
-    // ── 送出回覆 ───────────────────────────────────────────────
     async function submitReply(msgId) {
       const textarea = document.getElementById(`replyContent_${msgId}`);
       const content  = textarea ? textarea.value.trim() : '';
       if (!content) { alert('請輸入回覆內容'); return; }
 
       try {
-        const res = await fetch(`${API_BASE}/messages/${msgId}/reply`, {
-          method: 'PUT',
+        const res = await fetch(`${API_BASE}/messages`, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reply_user_id: currentUser.id, reply_content: content })
+          body: JSON.stringify({
+            user_id: currentUser.id,
+            parent_id: msgId,
+            content
+          })
         });
         const result = await res.json();
         if (!res.ok || !result.success) throw new Error(result.message || '回覆失敗');
@@ -435,7 +435,6 @@
       }
     }
 
-    // ── 刪除留言 ───────────────────────────────────────────────
     async function deleteMessage(msgId, btn) {
       if (!confirm('確定要刪除這則留言嗎？')) return;
       btn.disabled = true; btn.textContent = '刪除中...';
@@ -454,13 +453,12 @@
         }
       } catch (err) {
         alert(err.message || '刪除失敗');
-        btn.disabled = false; btn.textContent = '❌ 刪除留言';
+        btn.disabled = false; btn.textContent = '❌ 刪除';
       }
     }
 
-    // ── 工具函式 ───────────────────────────────────────────────
     function escHtml(str) {
-      return String(str)
+      return String(str || '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')

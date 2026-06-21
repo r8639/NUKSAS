@@ -37,9 +37,17 @@ function checkAuth(allowedRoles = []) {
 }
 
 function logout() {
-  if (confirm('確定要登出嗎？')) {
+  if (confirm('確定要登出系統嗎？')) {
     sessionStorage.removeItem('currentUser');
     // 使用完整路徑確保正確重定向
     window.location.href = '/scholarship/pages/login.html';
   }
 }
+
+// 自動載入通知元件（非登入頁）
+(function () {
+  if (window.location.pathname.includes('login')) return;
+  const s = document.createElement('script');
+  s.src = '/scholarship/pages/notifications.js';
+  document.head.appendChild(s);
+})();

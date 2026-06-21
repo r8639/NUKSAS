@@ -105,6 +105,33 @@ function generateOTP() {
 define('EMAIL_REGEX', '/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/');
 
 // ============================================================
+// 通知中心輔助函式
+// ============================================================
+
+function createNotification(PDO $pdo, string $userId, string $title, string $content, string $targetUrl = ''): void {
+    try {
+        $stmt = $pdo->prepare(
+            'INSERT INTO Notification (user_id, title, content, target_url) VALUES (?, ?, ?, ?)'
+        );
+        $stmt->execute([$userId, $title, $content, $targetUrl]);
+    } catch (PDOException $e) {
+        error_log('[通知] 建立失敗：' . $e->getMessage());
+    }
+}
+
+function notifyAllByType(PDO $pdo, string $userType, string $title, string $content, string $targetUrl = ''): void {
+    try {
+        $stmt = $pdo->prepare('SELECT id FROM User WHERE type = ?');
+        $stmt->execute([$userType]);
+        foreach ($stmt->fetchAll() as $row) {
+            createNotification($pdo, $row['id'], $title, $content, $targetUrl);
+        }
+    } catch (PDOException $e) {
+        error_log('[通知] 批量建立失敗：' . $e->getMessage());
+    }
+}
+
+// ============================================================
 // 路由: POST /login - 登入驗證（LoginManager C002）
 // ============================================================
 if ($method === 'POST' && isset($segments[0]) && $segments[0] === 'login') {
@@ -422,6 +449,12 @@ else if ($method === 'POST' && $segments[0] === 'scholarships' && isset($segment
         $stmt->execute([$data['admin_id'] ?? 'A001', $scholarshipName]);
         
         if ($stmt->rowCount() > 0) {
+            // 通知所有學生
+            notifyAllByType($pdo, 'Student',
+                "📢 新獎學金開放申請：{$scholarshipName}",
+                '符合資格的同學請盡快至系統申請',
+                '/scholarship/pages/student_dashboard.html'
+            );
             echo json_encode(['success' => true, 'message' => '獎學金已發放']);
         } else {
             echo json_encode(['success' => false, 'message' => '找不到該獎學金']);
@@ -484,9 +517,10 @@ else if ($method === 'DELETE' && $segments[0] === 'scholarships' && isset($segme
 // 路由: GET /organization/{id}/applications - 獲取機構的申請列表
 else if ($method === 'GET' && $segments[0] === 'organization' && isset($segments[1]) && isset($segments[2]) && $segments[2] === 'applications') {
     $organizationId = $segments[1];
-    
+    error_log("[DEBUG GET /organization/{$organizationId}/applications] 開始查詢");
+
     try {
-        $stmt = $pdo->prepare("
+        $sql = "
             SELECT
                 a.id,
                 a.student_id,
@@ -496,23 +530,26 @@ else if ($method === 'GET' && $segments[0] === 'organization' && isset($segments
                 a.score,
                 a.gpa,
                 a.family_income,
+                a.reject_reason,
+                a.recommendation_id,
                 s.amount,
-                u.name AS student_name
+                u.name       AS student_name,
+                u.department AS student_department
             FROM Application a
             JOIN Scholarship s ON a.scholarship_name = s.name
-            LEFT JOIN Student st ON a.student_id = st.id
-            LEFT JOIN User u ON st.id = u.id
+            JOIN User u ON a.student_id = u.id
             WHERE a.apply_state IN ('pending_review', 'Under Review', 'Pending')
-              AND s.name IN (
-                SELECT scholarship_name FROM Scholarship_Organization WHERE organization_id = ?
-              )
             ORDER BY a.apply_date DESC
-        ");
-        $stmt->execute([$organizationId]);
+        ";
+        error_log("[DEBUG GET /organization] SQL: " . trim(preg_replace('/\s+/', ' ', $sql)));
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute();
         $applications = $stmt->fetchAll();
+        error_log("[DEBUG GET /organization] 查到筆數: " . count($applications));
 
         echo json_encode(['success' => true, 'data' => $applications]);
     } catch(PDOException $e) {
+        error_log("[DEBUG GET /organization] PDO 錯誤: " . $e->getMessage());
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
 }
@@ -662,8 +699,24 @@ else if (($method === 'PUT' || $method === 'POST') && $segments[0] === 'applicat
             exit();
         }
 
-        // 需通知的狀態
+        // 系統內通知學生
         $notifyMap = ['Approved'=>'審核通過','Rejected'=>'審核不通過','tutor_rejected'=>'導師退件','review_rejected'=>'機構退件'];
+        if ($appInfo && isset($notifyMap[$applyState])) {
+            $stateLabel = $notifyMap[$applyState];
+            $icon = $applyState === 'Approved' ? '✅' : ($isRejection ? '↩️' : '❌');
+            $detail = $isRejection
+                ? "您申請的「{$appInfo['scholarship_name']}」被退件" . ($reason ? "，原因：{$reason}" : '') . '，請補件後重新提交。'
+                : ($applyState === 'Approved'
+                    ? "您申請的「{$appInfo['scholarship_name']}」已通過審查，恭喜！"
+                    : "您申請的「{$appInfo['scholarship_name']}」審查未通過" . ($reason ? "，原因：{$reason}" : '') . '。');
+            createNotification($pdo, $appInfo['student_id'],
+                "{$icon} {$stateLabel}：{$appInfo['scholarship_name']}",
+                $detail,
+                '/scholarship/pages/student_results.html'
+            );
+        }
+
+        // 需通知的狀態（Email 通知）
         if ($appInfo && isset($notifyMap[$applyState])) {
             $stateLabel = $notifyMap[$applyState];
             $stateColor = $applyState === 'Approved' ? '#22c55e' : '#ef4444';
@@ -720,7 +773,8 @@ else if ($method === 'POST' && $segments[0] === 'application' && isset($segments
 // 路由: POST /applications
 else if ($method === 'POST' && $segments[0] === 'applications') {
     $data = json_decode(file_get_contents('php://input'), true);
-    
+    error_log("[DEBUG POST /applications] 收到申請 student_id={$data['student_id']} scholarship={$data['scholarship_name']} requires_rec=" . ($data['requires_recommendation'] ?? 'null'));
+
     try {
         // 驗證學生身份是否符合獎學金限制
         $scholarshipStmt = $pdo->prepare("SELECT identity_restriction FROM Scholarship WHERE name = ?");
@@ -774,9 +828,23 @@ else if ($method === 'POST' && $segments[0] === 'applications') {
             }
         }
 
-        // 決定初始狀態
-        $requiresRec = !empty($data['requires_recommendation']) ? 1 : 0;
-        $initialState = $requiresRec ? 'pending_tutor' : 'pending_review';
+        // 防重複申請
+        $dupStmt = $pdo->prepare('SELECT id FROM Application WHERE student_id = ? AND scholarship_name = ?');
+        $dupStmt->execute([$data['student_id'], $data['scholarship_name']]);
+        if ($dupStmt->fetch()) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => '您已經申請過此項獎學金，無法重複申請！']);
+            exit;
+        }
+
+        // 強制 intval 確保不受空字串/null/'0'/'1' 型別差異影響
+        $rawRec = isset($data['requires_recommendation']) ? intval($data['requires_recommendation']) : 0;
+        if ($rawRec === 1) {
+            $db_state = 'pending_tutor';   // 需要導師推薦
+        } else {
+            $db_state = 'pending_review';  // 直接進入審查
+        }
+        $requiresRec = $rawRec;
 
         // 生成唯一的申請 ID
         $applicationId = 'APP' . round(microtime(true) * 1000);
@@ -789,14 +857,42 @@ else if ($method === 'POST' && $segments[0] === 'applications') {
             $applicationId,
             $data['student_id'],
             $data['scholarship_name'],
-            $initialState,
+            $db_state,
             $data['score'],
             $data['gpa'],
             $requiresRec
         ]);
+        error_log("[DEBUG POST /applications] db_state={$db_state} requiresRec={$requiresRec} applicationId={$applicationId}");
 
+        // 通知相關人員
+        $stuStmt = $pdo->prepare('SELECT name, department FROM User WHERE id = ?');
+        $stuStmt->execute([$data['student_id']]);
+        $stuRow  = $stuStmt->fetch();
+        $stuName = $stuRow['name'] ?? $data['student_id'];
+        $dept    = $stuRow['department'] ?? null;
+
+        if ($requiresRec && $dept) {
+            $tStmt = $pdo->prepare("SELECT id FROM User WHERE type = 'Teacher' AND department = ?");
+            $tStmt->execute([$dept]);
+            foreach ($tStmt->fetchAll() as $t) {
+                createNotification($pdo, $t['id'],
+                    '📝 學生申請需要推薦信',
+                    "{$stuName} 申請「{$data['scholarship_name']}」，需要您的推薦信",
+                    '/scholarship/pages/teacher_students.html'
+                );
+            }
+        } elseif (!$requiresRec) {
+            notifyAllByType($pdo, 'Organization',
+                '📋 新申請待審查',
+                "學生 {$stuName} 申請「{$data['scholarship_name']}」，請進行審查",
+                '/scholarship/pages/organization_applications.html'
+            );
+        }
+
+        error_log("[DEBUG POST /applications] 寫入成功 applicationId={$applicationId} apply_state={$db_state}");
         echo json_encode(['success' => true, 'message' => '申請提交成功', 'id' => $applicationId]);
     } catch(PDOException $e) {
+        error_log("[DEBUG POST /applications] PDO 錯誤: " . $e->getMessage());
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
 }
@@ -992,7 +1088,10 @@ else if ($method === 'PUT' && $segments[0] === 'scholarships' && isset($segments
 // 路由: POST /recommendation - 提交推薦信
 else if ($method === 'POST' && $segments[0] === 'recommendation' && !isset($segments[1])) {
     $data = json_decode(file_get_contents('php://input'), true);
-    
+    // 清除 teacher_id / application_id 的前後空白，避免 FK 1452 錯誤
+    if (isset($data['teacher_id']))    $data['teacher_id']    = trim($data['teacher_id']);
+    if (isset($data['application_id'])) $data['application_id'] = trim($data['application_id']);
+
     try {
         $recommendationId = 'REC' . time();
         $filePath = null;
@@ -1031,17 +1130,35 @@ else if ($method === 'POST' && $segments[0] === 'recommendation' && !isset($segm
         if (isset($data['application_id'])) {
             $stmt = $pdo->prepare("UPDATE Application SET recommendation_id = ?, apply_state = 'pending_review' WHERE id = ? AND apply_state = 'pending_tutor'");
             $stmt->execute([$recommendationId, $data['application_id']]);
+
+            // 通知所有機構：推薦信已完成
+            $appStmt = $pdo->prepare('SELECT scholarship_name FROM Application WHERE id = ?');
+            $appStmt->execute([$data['application_id']]);
+            $appRow  = $appStmt->fetch();
+            $schName = $appRow['scholarship_name'] ?? $data['application_id'];
+            notifyAllByType($pdo, 'Organization',
+                '✅ 推薦信已完成，申請可審查',
+                "申請案「{$schName}」的導師推薦信已提交，請進行審查",
+                '/scholarship/pages/organization_applications.html'
+            );
         }
 
         echo json_encode(['success' => true, 'data' => ['id' => $recommendationId, 'file_path' => $filePath]]);
     } catch(PDOException $e) {
-        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        $msg = $e->getMessage();
+        if ($e->getCode() === '23000' && str_contains($msg, '1452')) {
+            $msg = "導師帳號尚未建立完整資料，無法儲存推薦信（teacher_id: " . ($data['teacher_id'] ?? '') . " 不存在於 Teacher 表）";
+        }
+        error_log("[POST /recommendation] 錯誤: {$msg}");
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $msg]);
     }
 }
 
 // 路由: GET /teacher/{id}/applications - 取得教師「本科系」學生的申請列表（科系隔離）
 else if ($method === 'GET' && $segments[0] === 'teacher' && isset($segments[1]) && isset($segments[2]) && $segments[2] === 'applications') {
     $teacherId = $segments[1];
+    error_log("[DEBUG GET /teacher/{$teacherId}/applications] 開始查詢");
 
     try {
         // 步驟一：查詢該導師的科系
@@ -1049,10 +1166,13 @@ else if ($method === 'GET' && $segments[0] === 'teacher' && isset($segments[1]) 
         $deptStmt->execute([$teacherId]);
         $deptRow = $deptStmt->fetch();
 
-        $teacherDepartment = (!$deptRow || empty($deptRow['department'])) ? null : $deptRow['department'];
+        $teacherDepartment = (!$deptRow || empty($deptRow['department'])) ? null : trim($deptRow['department'] ?? '');
+        if ($teacherDepartment === '') $teacherDepartment = null;
+
+        error_log("[DEBUG GET /teacher] teacherDepartment=" . ($teacherDepartment ?? 'NULL'));
 
         if ($teacherDepartment) {
-            $stmt = $pdo->prepare("
+            $sql = "
                 SELECT
                     a.id,
                     a.student_id,
@@ -1067,16 +1187,17 @@ else if ($method === 'GET' && $segments[0] === 'teacher' && isset($segments[1]) 
                     a.recommendation_id,
                     r.content    AS recommendation_content
                 FROM Application a
-                JOIN Student s ON a.student_id = s.id
-                JOIN User u ON s.id = u.id
+                JOIN User u ON a.student_id = u.id
                 LEFT JOIN Recommendation r ON a.recommendation_id = r.id
                 WHERE a.apply_state = 'pending_tutor'
-                  AND u.department = ?
+                  AND TRIM(u.department) = TRIM(?)
                 ORDER BY a.apply_date DESC
-            ");
+            ";
+            error_log("[DEBUG GET /teacher] 使用科系篩選: {$teacherDepartment}");
+            $stmt = $pdo->prepare($sql);
             $stmt->execute([$teacherDepartment]);
         } else {
-            $stmt = $pdo->prepare("
+            $sql = "
                 SELECT
                     a.id,
                     a.student_id,
@@ -1091,17 +1212,20 @@ else if ($method === 'GET' && $segments[0] === 'teacher' && isset($segments[1]) 
                     a.recommendation_id,
                     r.content    AS recommendation_content
                 FROM Application a
-                JOIN Student s ON a.student_id = s.id
-                JOIN User u ON s.id = u.id
+                JOIN User u ON a.student_id = u.id
                 LEFT JOIN Recommendation r ON a.recommendation_id = r.id
                 WHERE a.apply_state = 'pending_tutor'
                 ORDER BY a.apply_date DESC
-            ");
+            ";
+            error_log("[DEBUG GET /teacher] 無科系篩選，查全部 pending_tutor");
+            $stmt = $pdo->prepare($sql);
             $stmt->execute();
         }
         $applications = $stmt->fetchAll();
+        error_log("[DEBUG GET /teacher] 查到筆數: " . count($applications));
         echo json_encode(['success' => true, 'data' => $applications, 'department' => $teacherDepartment, 'departmentFiltered' => !!$teacherDepartment]);
     } catch(PDOException $e) {
+        error_log("[DEBUG GET /teacher] PDO 錯誤: " . $e->getMessage());
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
 }
@@ -1692,6 +1816,7 @@ else if ($method === 'GET' && isset($segments[0]) && $segments[0] === 'messages'
         $stmt = $pdo->prepare("
             SELECT
                 m.id,
+                m.parent_id,
                 m.user_id,
                 m.title,
                 m.content,
@@ -1711,11 +1836,29 @@ else if ($method === 'GET' && isset($segments[0]) && $segments[0] === 'messages'
             WHERE m.visibility = 'Public'
                OR m.user_id = ?
                OR m.target_user_id = ?
-            ORDER BY m.created_at DESC
+            ORDER BY m.created_at ASC
         ");
         $stmt->execute([$viewerId, $viewerId]);
-        $messages = $stmt->fetchAll();
-        echo json_encode(['success' => true, 'data' => $messages]);
+        $rows = $stmt->fetchAll();
+
+        // Build in-memory tree
+        $byId = [];
+        foreach ($rows as &$r) { $r['replies'] = []; $byId[$r['id']] = &$r; }
+        unset($r);
+
+        $roots = [];
+        foreach ($rows as &$r) {
+            if ($r['parent_id'] && isset($byId[$r['parent_id']])) {
+                $byId[$r['parent_id']]['replies'][] = &$r;
+            } elseif (!$r['parent_id']) {
+                $roots[] = &$r;
+            }
+        }
+        unset($r);
+
+        usort($roots, function($a, $b) { return strcmp($b['created_at'], $a['created_at']); });
+
+        echo json_encode(['success' => true, 'data' => $roots]);
     } catch (PDOException $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
@@ -1726,9 +1869,15 @@ else if ($method === 'GET' && isset($segments[0]) && $segments[0] === 'messages'
 else if ($method === 'POST' && isset($segments[0]) && $segments[0] === 'messages' && count($segments) === 1) {
     $data = json_decode(file_get_contents('php://input'), true);
 
-    if (!isset($data['user_id']) || !isset($data['title']) || !isset($data['content'])) {
+    $parentId = $data['parent_id'] ?? null;
+    if (!isset($data['user_id']) || !isset($data['content'])) {
         http_response_code(400);
-        echo json_encode(['success' => false, 'message' => 'user_id、title 與 content 為必填欄位']);
+        echo json_encode(['success' => false, 'message' => 'user_id 與 content 為必填欄位']);
+        exit;
+    }
+    if (!$parentId && !isset($data['title'])) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '新留言必須填寫標題']);
         exit;
     }
     $visibility = $data['visibility'] ?? 'Public';
@@ -1737,14 +1886,14 @@ else if ($method === 'POST' && isset($segments[0]) && $segments[0] === 'messages
         echo json_encode(['success' => false, 'message' => "visibility 必須為 'Public' 或 'Private'"]);
         exit;
     }
-    if ($visibility === 'Private' && empty($data['target_user_id'])) {
+    if (!$parentId && $visibility === 'Private' && empty($data['target_user_id'])) {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => '私密留言必須指定 target_user_id']);
         exit;
     }
     try {
-        // SystemAdministrator 不可發言
-        $stmt = $pdo->prepare("SELECT type FROM User WHERE id = ?");
+        // SystemAdministrator 不可發起根留言，但可回覆
+        $stmt = $pdo->prepare("SELECT type, name FROM User WHERE id = ?");
         $stmt->execute([$data['user_id']]);
         $userRow = $stmt->fetch();
         if (!$userRow) {
@@ -1752,25 +1901,36 @@ else if ($method === 'POST' && isset($segments[0]) && $segments[0] === 'messages
             echo json_encode(['success' => false, 'message' => '找不到使用者']);
             exit;
         }
-        if ($userRow['type'] === 'SystemAdministrator') {
+        if (!$parentId && $userRow['type'] === 'SystemAdministrator') {
             http_response_code(403);
-            echo json_encode(['success' => false, 'message' => '系統管理員不可發表留言']);
+            echo json_encode(['success' => false, 'message' => '系統管理員不可發表新留言']);
             exit;
         }
         $messageId = 'MSG' . round(microtime(true) * 1000);
         $stmt = $pdo->prepare("
-            INSERT INTO Message (id, user_id, title, content, visibility, target_user_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO Message (id, parent_id, user_id, title, content, visibility, target_user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
             $messageId,
+            $parentId,
             $data['user_id'],
-            $data['title'],
+            $data['title'] ?? '',
             $data['content'],
             $visibility,
             $data['target_user_id'] ?? null
         ]);
-        echo json_encode(['success' => true, 'message' => '留言發布成功', 'data' => ['id' => $messageId]]);
+        // 私密根留言：通知收件人
+        if (!$parentId && $visibility === 'Private' && !empty($data['target_user_id'])) {
+            $senderName = $userRow['name'] ?? $data['user_id'];
+            createNotification($pdo, $data['target_user_id'],
+                "💬 您收到 {$senderName} 的私人留言",
+                "「{$data['title']}」",
+                '/scholarship/pages/message_board.html'
+            );
+        }
+        $msg = $parentId ? '回覆成功' : '留言發布成功';
+        echo json_encode(['success' => true, 'message' => $msg, 'data' => ['id' => $messageId]]);
     } catch (PDOException $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
@@ -2098,6 +2258,80 @@ else if ($method === 'DELETE' && isset($segments[0]) && $segments[0] === 'memos'
     } catch (PDOException $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
+// ============================================================
+// 通知中心 API 路由
+// ============================================================
+
+// GET /notifications/unread-count?user_id=XXX
+else if ($method === 'GET' && ($segments[0] ?? '') === 'notifications' && ($segments[1] ?? '') === 'unread-count') {
+    $userId = $_GET['user_id'] ?? null;
+    if (!$userId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少 user_id 參數']);
+        exit;
+    }
+    try {
+        $stmt = $pdo->prepare('SELECT COUNT(*) AS count FROM Notification WHERE user_id = ? AND is_read = 0');
+        $stmt->execute([$userId]);
+        $row = $stmt->fetch();
+        echo json_encode(['success' => true, 'count' => (int)$row['count']]);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+}
+
+// PUT /notifications/read-all?user_id=XXX
+else if ($method === 'PUT' && ($segments[0] ?? '') === 'notifications' && ($segments[1] ?? '') === 'read-all') {
+    $userId = $_GET['user_id'] ?? null;
+    if (!$userId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少 user_id 參數']);
+        exit;
+    }
+    try {
+        $stmt = $pdo->prepare('UPDATE Notification SET is_read = 1 WHERE user_id = ?');
+        $stmt->execute([$userId]);
+        echo json_encode(['success' => true]);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+}
+
+// GET /notifications?user_id=XXX
+else if ($method === 'GET' && ($segments[0] ?? '') === 'notifications' && count($segments) === 1) {
+    $userId = $_GET['user_id'] ?? null;
+    if (!$userId) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少 user_id 參數']);
+        exit;
+    }
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT * FROM Notification WHERE user_id = ? ORDER BY created_at DESC LIMIT 50'
+        );
+        $stmt->execute([$userId]);
+        echo json_encode(['success' => true, 'data' => $stmt->fetchAll()]);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+}
+
+// PUT /notifications/{id}/read
+else if ($method === 'PUT' && ($segments[0] ?? '') === 'notifications' && isset($segments[1]) && ($segments[2] ?? '') === 'read') {
+    $notifId = $segments[1];
+    try {
+        $stmt = $pdo->prepare('UPDATE Notification SET is_read = 1 WHERE id = ?');
+        $stmt->execute([$notifId]);
+        echo json_encode(['success' => true]);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
 }
 

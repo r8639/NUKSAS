@@ -206,11 +206,8 @@
               <option value="僑生">境外學生（僑生/外籍生）</option>
             </select>
           </div>
-          <div>
-            <label>主修科系</label>
-            <input type="text" id="major" name="major" required>
-          </div>
-          
+          <!-- 主修科系由管理員帳號建立時固定，不開放學生自行修改 -->
+
           <!-- 僑生額外資訊 -->
           <div id="overseasFields" style="display: none;">
             <hr style="border: 1px solid var(--border); margin: 16px 0;">
@@ -378,7 +375,7 @@
         document.getElementById('studentId').value = data.id || '';
         document.getElementById('email').value = data.email || '';
         document.getElementById('identity').value = data.identity || '一般生';
-        document.getElementById('major').value = data.major || '';
+        // major 欄位已移除，科系由帳號管理員固定
 
         // 填充電話號碼（支援多筆）
         let phones = [];
@@ -597,8 +594,6 @@
 
       const name = (formData.get('name') || '').trim();
       const email = (formData.get('email') || '').trim();
-      const major = (formData.get('major') || '').trim();
-
       // 基本 Email 格式驗證（任意網域）
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
         showError('Email 格式不正確');
@@ -609,7 +604,6 @@
         name,
         email,
         identity: formData.get('identity'),
-        major,
         phones: phones,
         additionalInfo: null
       };

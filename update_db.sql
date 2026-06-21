@@ -60,6 +60,21 @@ ALTER TABLE Identity_Proof
   ADD COLUMN file_mime VARCHAR(100) NULL
   COMMENT '檔案 MIME 類型，例：image/jpeg、application/pdf';
 
+-- 原始檔案名稱（供前端顯示）
+ALTER TABLE Identity_Proof
+  ADD COLUMN file_name VARCHAR(255) NULL
+  COMMENT '上傳時的原始檔案名稱';
+
+-- 檔案大小（bytes）
+ALTER TABLE Identity_Proof
+  ADD COLUMN file_size INT NULL
+  COMMENT '檔案大小（bytes）';
+
+-- 上傳時間
+ALTER TABLE Identity_Proof
+  ADD COLUMN uploaded_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+  COMMENT '上傳時間';
+
 DESCRIBE Identity_Proof;
 
 -- =============================================

@@ -95,6 +95,31 @@ function generateOTP() {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
+// ============================================
+// 通知中心輔助函式
+// ============================================
+async function createNotification(userId, title, content, targetUrl) {
+  try {
+    await promisePool.query(
+      'INSERT INTO Notification (user_id, title, content, target_url) VALUES (?, ?, ?, ?)',
+      [userId, title, content, targetUrl || '']
+    );
+  } catch (e) {
+    console.error('[通知] 建立失敗:', e.message);
+  }
+}
+
+async function notifyAllByType(userType, title, content, targetUrl) {
+  try {
+    const [users] = await promisePool.query('SELECT id FROM User WHERE type = ?', [userType]);
+    for (const u of users) {
+      await createNotification(u.id, title, content, targetUrl);
+    }
+  } catch (e) {
+    console.error('[通知] 批量建立失敗:', e.message);
+  }
+}
+
 function debugOTP(context, userId, otp) {
   console.log('\n\x1b[43m\x1b[30m ========== [OTP DEBUG LOG] ========== \x1b[0m');
   console.log(`\x1b[36m  場景    : ${context}\x1b[0m`);
@@ -579,6 +604,14 @@ app.post('/api/scholarships/:name/publish', async (req, res) => {
       return res.status(404).json({ success: false, message: '找不到指定的獎學金' });
     }
 
+    // 通知所有學生
+    notifyAllByType(
+      'Student',
+      `📢 新獎學金開放申請：${scholarshipName}`,
+      '符合資格的同學請盡快至系統申請',
+      '/scholarship/pages/student_dashboard.html'
+    ).catch(() => {});
+
     res.json({ success: true, message: '獎學金已發放' });
   } catch (error) {
     console.error('發放獎學金錯誤:', error);
@@ -657,6 +690,7 @@ app.post('/api/applications', async (req, res) => {
 app.post('/api/application', async (req, res) => {
   try {
     const { student_id, scholarship_name, apply_way, score, gpa, family_income, requires_recommendation } = req.body;
+    console.log(`[DEBUG POST /application] student_id=${student_id} scholarship=${scholarship_name} requires_rec=${requires_recommendation}`);
 
     if (!student_id || !scholarship_name) {
       return res.status(400).json({ success: false, message: '缺少必填欄位' });
@@ -692,15 +726,56 @@ app.post('/api/application', async (req, res) => {
       }
     }
 
-    const needsTutor = requires_recommendation ? 1 : 0;
-    const initialState = needsTutor ? 'pending_tutor' : 'pending_review';
+    // 防重複申請
+    const [existing] = await promisePool.query(
+      'SELECT id FROM Application WHERE student_id = ? AND scholarship_name = ?',
+      [student_id, scholarship_name]
+    );
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, message: '您已經申請過此項獎學金，無法重複申請！' });
+    }
+
+    // 強制 parseInt 確保不受 '0'/'1'/true/false 型別差異影響
+    const needsTutor = parseInt(requires_recommendation, 10) === 1 ? 1 : 0;
+    let db_state;
+    if (needsTutor === 1) {
+      db_state = 'pending_tutor';   // 需要導師推薦
+    } else {
+      db_state = 'pending_review';  // 直接進入審查
+    }
     const applicationId = 'APP' + Date.now();
+    console.log(`[DEBUG POST /application] needsTutor=${needsTutor} db_state=${db_state} applicationId=${applicationId}`);
 
     await promisePool.query(`
       INSERT INTO Application
       (id, student_id, scholarship_name, apply_way, apply_state, score, gpa, family_income, requires_recommendation)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [applicationId, student_id, scholarship_name, apply_way || null, initialState, score, gpa, family_income || null, needsTutor]);
+    `, [applicationId, student_id, scholarship_name, apply_way || null, db_state, score, gpa, family_income || null, needsTutor]);
+
+    // 通知相關人員
+    try {
+      const [[stuRow]] = await promisePool.query('SELECT name, department FROM User WHERE id = ?', [student_id]);
+      const stuName = stuRow?.name || student_id;
+      const dept    = stuRow?.department;
+      if (needsTutor && dept) {
+        const [teachers] = await promisePool.query(
+          "SELECT id FROM User WHERE type = 'Teacher' AND department = ?", [dept]
+        );
+        for (const t of teachers) {
+          createNotification(t.id,
+            `📝 學生申請需要推薦信`,
+            `${stuName} 申請「${scholarship_name}」，需要您的推薦信`,
+            '/scholarship/pages/teacher_students.html'
+          ).catch(() => {});
+        }
+      } else if (!needsTutor) {
+        notifyAllByType('Organization',
+          `📋 新申請待審查`,
+          `學生 ${stuName} 申請「${scholarship_name}」，請進行審查`,
+          '/scholarship/pages/organization_applications.html'
+        ).catch(() => {});
+      }
+    } catch { /* 通知失敗不影響主流程 */ }
 
     res.json({ success: true, message: '申請提交成功', applicationId });
   } catch (error) {
@@ -724,6 +799,7 @@ app.get('/api/messages', async (req, res) => {
     const [rows] = await promisePool.query(`
       SELECT
         m.id,
+        m.parent_id,
         m.user_id,
         m.title,
         m.content,
@@ -743,10 +819,23 @@ app.get('/api/messages', async (req, res) => {
       WHERE m.visibility = 'Public'
          OR m.user_id = ?
          OR m.target_user_id = ?
-      ORDER BY m.created_at DESC
+      ORDER BY m.created_at ASC
     `, [viewerId, viewerId]);
 
-    res.json({ success: true, data: rows });
+    // 建立樹狀結構：根留言掛 replies 陣列
+    const byId = {};
+    rows.forEach(r => { r.replies = []; byId[r.id] = r; });
+    const roots = [];
+    rows.forEach(r => {
+      if (r.parent_id && byId[r.parent_id]) {
+        byId[r.parent_id].replies.push(r);
+      } else if (!r.parent_id) {
+        roots.push(r);
+      }
+    });
+    roots.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    res.json({ success: true, data: roots });
   } catch (error) {
     console.error('取得留言列表錯誤:', error);
     res.status(500).json({ success: false, message: '伺服器錯誤', error: error.message });
@@ -756,35 +845,48 @@ app.get('/api/messages', async (req, res) => {
 // POST /api/messages - 新增留言
 app.post('/api/messages', async (req, res) => {
   try {
-    const { user_id, title, content, visibility, target_user_id } = req.body;
+    const { user_id, title, content, visibility, target_user_id, parent_id } = req.body;
 
-    if (!user_id || !title || !content) {
-      return res.status(400).json({ success: false, message: 'user_id、title 與 content 為必填欄位' });
+    if (!user_id || !content) {
+      return res.status(400).json({ success: false, message: 'user_id 與 content 為必填欄位' });
+    }
+    if (!parent_id && !title) {
+      return res.status(400).json({ success: false, message: '新留言必須填寫標題' });
     }
     const vis = visibility || 'Public';
     if (!['Public', 'Private'].includes(vis)) {
       return res.status(400).json({ success: false, message: "visibility 必須為 'Public' 或 'Private'" });
     }
-    if (vis === 'Private' && !target_user_id) {
+    if (!parent_id && vis === 'Private' && !target_user_id) {
       return res.status(400).json({ success: false, message: '私密留言必須指定 target_user_id' });
     }
 
-    // SystemAdministrator 不可發言
-    const [userRows] = await promisePool.query('SELECT type FROM User WHERE id = ?', [user_id]);
+    // SystemAdministrator 不可發起根留言，但可回覆
+    const [userRows] = await promisePool.query('SELECT type, name FROM User WHERE id = ?', [user_id]);
     if (userRows.length === 0) {
       return res.status(404).json({ success: false, message: '找不到使用者' });
     }
-    if (userRows[0].type === 'SystemAdministrator') {
-      return res.status(403).json({ success: false, message: '系統管理員不可發表留言' });
+    if (!parent_id && userRows[0].type === 'SystemAdministrator') {
+      return res.status(403).json({ success: false, message: '系統管理員不可發表新留言' });
     }
 
     const messageId = 'MSG' + Date.now();
     await promisePool.query(
-      'INSERT INTO Message (id, user_id, title, content, visibility, target_user_id) VALUES (?, ?, ?, ?, ?, ?)',
-      [messageId, user_id, title, content, vis, target_user_id || null]
+      'INSERT INTO Message (id, parent_id, user_id, title, content, visibility, target_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [messageId, parent_id || null, user_id, title || '', content, vis, target_user_id || null]
     );
 
-    res.json({ success: true, message: '留言發布成功', data: { id: messageId } });
+    // 私密根留言：通知收件人
+    if (!parent_id && vis === 'Private' && target_user_id) {
+      const senderName = userRows[0]?.name || user_id;
+      createNotification(target_user_id,
+        `💬 您收到 ${senderName} 的私人留言`,
+        `「${title}」`,
+        '/scholarship/pages/message_board.html'
+      ).catch(() => {});
+    }
+
+    res.json({ success: true, message: parent_id ? '回覆成功' : '留言發布成功', data: { id: messageId } });
   } catch (error) {
     console.error('新增留言錯誤:', error);
     res.status(500).json({ success: false, message: '新增留言失敗', error: error.message });
@@ -1295,28 +1397,29 @@ app.delete('/api/memos/:id', async (req, res) => {
 app.get('/api/organization/:id/applications', async (req, res) => {
   try {
     const organizationId = req.params.id;
+    console.log(`[DEBUG GET /organization/${organizationId}/applications]`);
     const [rows] = await promisePool.query(`
       SELECT
         a.id,
         a.student_id,
         u.name        AS student_name,
+        u.department  AS student_department,
         a.scholarship_name,
         a.apply_date,
         a.apply_state,
         a.score,
         a.gpa,
         a.family_income,
+        a.reject_reason,
+        a.recommendation_id,
         s.amount
       FROM Application a
       JOIN Scholarship s ON a.scholarship_name = s.name
-      LEFT JOIN Student st ON a.student_id = st.id
-      LEFT JOIN User u ON st.id = u.id
+      JOIN User u ON a.student_id = u.id
       WHERE a.apply_state IN ('pending_review', 'Under Review', 'Pending')
-        AND s.name IN (
-          SELECT scholarship_name FROM Scholarship_Organization WHERE organization_id = ?
-        )
       ORDER BY a.apply_date DESC
-    `, [organizationId]);
+    `);
+    console.log(`[DEBUG GET /organization] 查到 ${rows.length} 筆`);
     res.json({ success: true, data: rows });
   } catch (error) {
     console.error('取得機構申請列表錯誤:', error);
@@ -1328,6 +1431,7 @@ app.get('/api/organization/:id/applications', async (req, res) => {
 app.get('/api/teacher/:id/applications', async (req, res) => {
   try {
     const teacherId = req.params.id;
+    console.log(`[DEBUG GET /teacher/${teacherId}/applications]`);
 
     const [teacherRows] = await promisePool.query(
       "SELECT department FROM User WHERE id = ? AND type = 'Teacher'",
@@ -1355,8 +1459,7 @@ app.get('/api/teacher/:id/applications', async (req, res) => {
           a.recommendation_id,
           r.content    AS recommendation_content
         FROM Application a
-        JOIN Student s ON a.student_id = s.id
-        JOIN User u ON s.id = u.id
+        JOIN User u ON a.student_id = u.id
         LEFT JOIN Recommendation r ON a.recommendation_id = r.id
         WHERE a.apply_state = 'pending_tutor'
           AND u.department = ?
@@ -1378,14 +1481,14 @@ app.get('/api/teacher/:id/applications', async (req, res) => {
           a.recommendation_id,
           r.content    AS recommendation_content
         FROM Application a
-        JOIN Student s ON a.student_id = s.id
-        JOIN User u ON s.id = u.id
+        JOIN User u ON a.student_id = u.id
         LEFT JOIN Recommendation r ON a.recommendation_id = r.id
         WHERE a.apply_state = 'pending_tutor'
         ORDER BY a.apply_date DESC
       `);
     }
 
+    console.log(`[DEBUG GET /teacher] dept="${teacherDepartment}" 查到 ${rows.length} 筆`);
     res.json({ success: true, data: rows, department: teacherDepartment, departmentFiltered: !!teacherDepartment });
   } catch (error) {
     console.error('取得教師申請列表錯誤:', error);
@@ -1400,7 +1503,9 @@ app.get('/api/teacher/:id/applications', async (req, res) => {
 // POST /api/recommendation - 提交推薦信，同步將申請從 pending_tutor 推進至 pending_review
 app.post('/api/recommendation', async (req, res) => {
   try {
-    const { teacher_id, application_id, content } = req.body;
+    const teacher_id    = (req.body.teacher_id    || '').trim();
+    const application_id = (req.body.application_id || '').trim();
+    const content       = req.body.content || '';
     if (!teacher_id || !application_id || !content) {
       return res.status(400).json({ success: false, message: '缺少必填欄位' });
     }
@@ -1416,6 +1521,19 @@ app.post('/api/recommendation', async (req, res) => {
        WHERE id = ? AND apply_state = 'pending_tutor'`,
       [recommendationId, application_id]
     );
+
+    // 通知所有機構：申請案推薦信已完成，可進行審查
+    if (application_id) {
+      const [[appRow]] = await promisePool.query(
+        'SELECT scholarship_name FROM Application WHERE id = ?', [application_id]
+      ).catch(() => [[]]);
+      const schName = appRow?.scholarship_name || application_id;
+      notifyAllByType('Organization',
+        `✅ 推薦信已完成，申請可審查`,
+        `申請案「${schName}」的導師推薦信已提交，請進行審查`,
+        '/scholarship/pages/organization_applications.html'
+      ).catch(() => {});
+    }
 
     res.json({ success: true, data: { id: recommendationId } });
   } catch (error) {
@@ -1494,8 +1612,24 @@ app.put('/api/application/:id/review', async (req, res) => {
       return res.status(404).json({ success: false, message: '狀態未變更' });
     }
 
-    // 最終結果（核准/不通過/退件）：非同步發送 Email 通知學生
+    // 系統內通知學生
     const notifyStates = { Approved: '審核通過', Rejected: '審核不通過', tutor_rejected: '導師退件', review_rejected: '機構退件' };
+    if (notifyStates[apply_state] && appInfo) {
+      const stateLabel = notifyStates[apply_state];
+      const icon = apply_state === 'Approved' ? '✅' : (isRejection ? '↩️' : '❌');
+      const detail = isRejection
+        ? `您申請的「${appInfo.scholarship_name}」被退件${reason ? '，原因：' + reason : ''}，請補件後重新提交。`
+        : apply_state === 'Approved'
+          ? `您申請的「${appInfo.scholarship_name}」已通過審查，恭喜！`
+          : `您申請的「${appInfo.scholarship_name}」審查未通過${reason ? '，原因：' + reason : ''}。`;
+      createNotification(appInfo.student_id,
+        `${icon} ${stateLabel}：${appInfo.scholarship_name}`,
+        detail,
+        '/scholarship/pages/student_results.html'
+      ).catch(() => {});
+    }
+
+    // 最終結果（核准/不通過/退件）：非同步發送 Email 通知學生
     if (notifyStates[apply_state]) {
       const stateLabel = notifyStates[apply_state];
       const stateColor = apply_state === 'Approved' ? '#22c55e' : '#ef4444';
@@ -1517,6 +1651,62 @@ app.put('/api/application/:id/review', async (req, res) => {
   } catch (error) {
     console.error('審查錯誤:', error);
     res.status(500).json({ success: false, message: '伺服器錯誤', error: error.message });
+  }
+});
+
+// ============================================
+// 通知中心 API 路由
+// ============================================
+
+// GET /api/notifications/unread-count?user_id=XXX（靜態路徑優先於 :id）
+app.get('/api/notifications/unread-count', async (req, res) => {
+  const { user_id } = req.query;
+  if (!user_id) return res.status(400).json({ success: false, message: '缺少 user_id 參數' });
+  try {
+    const [[row]] = await promisePool.query(
+      'SELECT COUNT(*) AS count FROM Notification WHERE user_id = ? AND is_read = 0',
+      [user_id]
+    );
+    res.json({ success: true, count: row.count });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// PUT /api/notifications/read-all?user_id=XXX（靜態路徑優先於 :id）
+app.put('/api/notifications/read-all', async (req, res) => {
+  const { user_id } = req.query;
+  if (!user_id) return res.status(400).json({ success: false, message: '缺少 user_id 參數' });
+  try {
+    await promisePool.query('UPDATE Notification SET is_read = 1 WHERE user_id = ?', [user_id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// GET /api/notifications?user_id=XXX
+app.get('/api/notifications', async (req, res) => {
+  const { user_id } = req.query;
+  if (!user_id) return res.status(400).json({ success: false, message: '缺少 user_id 參數' });
+  try {
+    const [rows] = await promisePool.query(
+      'SELECT * FROM Notification WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
+      [user_id]
+    );
+    res.json({ success: true, data: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// PUT /api/notifications/:id/read
+app.put('/api/notifications/:id/read', async (req, res) => {
+  try {
+    await promisePool.query('UPDATE Notification SET is_read = 1 WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
   }
 });
 

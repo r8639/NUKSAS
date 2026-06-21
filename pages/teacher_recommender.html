@@ -40,6 +40,16 @@
     #rejectModal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;padding:16px;}
     .modal-box{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:24px;max-width:480px;width:100%;}
     .modal-box h3{margin:0 0 14px;font-size:18px;}
+    .cat-section{margin-bottom:12px;}
+    .cat-header{font-size:12px;font-weight:700;padding:3px 9px;border-radius:6px;display:inline-block;margin-bottom:7px;}
+    .cat-identity_proof{background:rgba(34,211,238,0.2);color:#22d3ee;}
+    .cat-transcript{background:rgba(34,197,94,0.2);color:#4ade80;}
+    .cat-award_certificate{background:rgba(251,191,36,0.2);color:#fbbf24;}
+    .doc-item{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;margin-bottom:5px;font-size:13px;}
+    .btn.sm-preview{padding:4px 9px;font-size:11px;background:rgba(34,211,238,0.15);color:var(--accent-strong);border-color:rgba(34,211,238,0.3);}
+    #previewModal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.88);z-index:9999;align-items:center;justify-content:center;padding:16px;}
+    .preview-box{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:20px;max-width:960px;width:100%;max-height:92vh;overflow:auto;}
+    .preview-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
   </style>
 </head>
 <body>
@@ -103,6 +113,17 @@
       </div>
     </section>
 
+  </div>
+
+  <!-- 佐證檔案預覽 Modal -->
+  <div id="previewModal">
+    <div class="preview-box">
+      <div class="preview-header">
+        <span id="previewTitle" style="font-weight:700;color:#e5e7eb;font-size:14px;word-break:break-all;flex:1;margin-right:10px;"></span>
+        <button onclick="closePreview()" style="background:rgba(239,68,68,0.2);color:#fca5a5;border:1px solid rgba(239,68,68,0.35);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;flex-shrink:0;">✕ 關閉</button>
+      </div>
+      <div id="previewContainer"></div>
+    </div>
   </div>
 
   <!-- 退件 Modal -->
@@ -200,7 +221,33 @@
       loadStudentInfo(defaultIdx);
     }
     
-    function loadStudentInfo(idx){
+    const CAT_LABELS = { identity_proof: '身份證明', transcript: '成績單', award_certificate: '參賽得獎' };
+
+    function guessMime(fp) {
+      const ext = (fp||'').split('.').pop().toLowerCase();
+      return {jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',pdf:'application/pdf'}[ext]||'';
+    }
+
+    function previewFile(filePath, fileMime, fileName) {
+      const mime = fileMime || guessMime(filePath);
+      document.getElementById('previewTitle').textContent = fileName;
+      const c = document.getElementById('previewContainer');
+      if (mime.startsWith('image/')) {
+        c.innerHTML = `<img src="${filePath}" alt="${fileName}" style="max-width:100%;max-height:72vh;border-radius:8px;display:block;margin:auto;">`;
+      } else if (mime === 'application/pdf') {
+        c.innerHTML = `<iframe src="${filePath}" style="width:100%;height:72vh;border:none;border-radius:8px;"></iframe>`;
+      } else {
+        c.innerHTML = `<p style="color:#9ca3af;">無法直接預覽。<a href="${filePath}" target="_blank" style="color:#22d3ee;">點此在新分頁開啟</a></p>`;
+      }
+      document.getElementById('previewModal').style.display = 'flex';
+    }
+
+    function closePreview() {
+      document.getElementById('previewModal').style.display = 'none';
+      document.getElementById('previewContainer').innerHTML = '';
+    }
+
+    async function loadStudentInfo(idx){
       if(!applications[idx]) return;
       const app = applications[idx];
       const infoDiv = document.getElementById('studentInfo');
@@ -209,13 +256,42 @@
         <p class="muted" style="margin:8px 0 0;">姓名：${app.student_name} | 學號：${app.student_id}</p>
         <p class="muted" style="margin:4px 0 0;">申請項目：${app.scholarship_name}</p>
         <p class="muted" style="margin:4px 0 0;">GPA：${app.gpa||'-'} | 成績：${app.score||'-'}</p>
+        <div id="docsSection" style="margin-top:12px;"><p class="muted" style="font-size:13px;">載入佐證檔案中…</p></div>
       `;
-      
+
       // 如果已有推薦信，顯示內容
       if(app.recommendation_content){
         document.getElementById('content').value = app.recommendation_content;
       } else {
         document.getElementById('content').value = '';
+      }
+
+      // 載入學生佐證檔案
+      try {
+        const res    = await fetch(`${API_BASE}/applications/${app.id}/documents`);
+        const result = await res.json();
+        const docsDiv = document.getElementById('docsSection');
+        if (!result.success) { docsDiv.innerHTML = '<p class="muted" style="font-size:13px;">無法載入佐證檔案</p>'; return; }
+        const groups  = result.data;
+        const allEmpty = Object.values(groups).every(g => g.length === 0);
+        if (allEmpty) { docsDiv.innerHTML = '<p class="muted" style="font-size:13px;">學生尚未上傳任何佐證檔案</p>'; return; }
+        docsDiv.innerHTML = '<p class="muted" style="font-size:13px;font-weight:700;margin-bottom:8px;">📎 佐證檔案</p>' +
+          Object.entries(groups).map(([cat, files]) => {
+            if (!files.length) return '';
+            return `<div class="cat-section">
+              <div class="cat-header cat-${cat}">${CAT_LABELS[cat]||cat}（${files.length} 件）</div>
+              ${files.map(f => {
+                const mime = f.file_mime || guessMime(f.file_path);
+                return `<div class="doc-item">
+                  <span style="color:#e5e7eb;">${f.file_name||f.file_path.split('/').pop()}</span>
+                  <button class="btn sm-preview" onclick="previewFile('${f.file_path}','${mime}','${(f.file_name||'').replace(/'/g,"\\'")}')">線上預覽</button>
+                </div>`;
+              }).join('')}
+            </div>`;
+          }).join('');
+      } catch(e) {
+        const docsDiv = document.getElementById('docsSection');
+        if (docsDiv) docsDiv.innerHTML = '<p style="color:#f87171;font-size:13px;">佐證檔案載入失敗</p>';
       }
     }
     
