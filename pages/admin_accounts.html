@@ -214,11 +214,9 @@
         </div>
         <div class="split">
           <div>
-            <label for="accountEmail">Email * <span style="color:var(--muted);font-weight:400;font-size:12px;">（僅限真實 Gmail）</span></label>
+            <label for="accountEmail">Email *</label>
             <input type="email" id="accountEmail" name="email"
-              placeholder="僅限輸入真實 Gmail（例：user@gmail.com）"
-              pattern="[a-zA-Z0-9._%+\-]+@gmail\.com"
-              title="Email 必須為 @gmail.com 格式"
+              placeholder="例：user@nuk.edu.tw、test@example.com"
               required>
           </div>
           <div>
@@ -369,10 +367,9 @@
         return;
       }
 
-      // 後端會再次驗證；前端提前攔截提升體驗
-      const gmailOk = /^[a-zA-Z0-9._%+\-]+@gmail\.com$/.test(email);
-      if (!gmailOk) {
-        msgDiv.innerHTML = `<div class="error-msg">❌ Email 必須為 @gmail.com 格式（例：user@gmail.com）</div>`;
+      // 基本 Email 格式驗證（任意網域）
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        msgDiv.innerHTML = `<div class="error-msg">❌ Email 格式不正確</div>`;
         return;
       }
 

@@ -31,7 +31,7 @@ async function main() {
         password          = VALUES(password),
         email_verified    = 1,
         verification_code = NULL
-    `, ['ADMIN002', '系統管理員', 'allen6742@gmail.com', hashed]);
+    `, ['ADMIN002', '模擬管理員', 'mockadmin@nuk.edu.tw', hashed]);
 
     // 寫入 System_Administrator 擴充表
     await pool.execute(`
@@ -43,7 +43,7 @@ async function main() {
     console.log('✅ 管理員帳號建立成功！\n');
     console.log('  帳號 ID  : ADMIN002');
     console.log('  姓名     : 系統管理員');
-    console.log('  Email    : allen6742@gmail.com');
+    console.log('  Email    : mockadmin@nuk.edu.tw');
     console.log(`  密碼     : ${PLAIN_PASSWORD}`);
     console.log('  類型     : SystemAdministrator');
     console.log('  已驗證   : 是\n');

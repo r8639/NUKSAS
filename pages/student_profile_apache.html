@@ -599,9 +599,9 @@
       const email = (formData.get('email') || '').trim();
       const major = (formData.get('major') || '').trim();
 
-      // 僅允許 @gmail.com、@example.com、@foundation.org 的合法 Email
-      if (!/^[^@\s]+@(gmail\.com|example\.com|foundation\.org)$/i.test(email)) {
-        showError('Email 必須是 @gmail.com / @example.com / @foundation.org');
+      // 基本 Email 格式驗證（任意網域）
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        showError('Email 格式不正確');
         return;
       }
 

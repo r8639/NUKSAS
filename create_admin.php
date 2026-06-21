@@ -32,8 +32,8 @@ try {
     ");
     $stmt->execute([
         ':id'       => 'ADMIN002',
-        ':name'     => '系統管理員',
-        ':email'    => 'allen6742@gmail.com',
+        ':name'     => '模擬管理員',
+        ':email'    => 'mockadmin@nuk.edu.tw',
         ':password' => $hashed,
     ]);
 
@@ -48,8 +48,8 @@ try {
     echo "<pre style='font-family:monospace;font-size:14px;padding:24px;'>";
     echo "✅ 管理員帳號建立成功！\n\n";
     echo "  帳號 ID  : ADMIN002\n";
-    echo "  姓名     : 系統管理員\n";
-    echo "  Email    : allen6742@gmail.com\n";
+    echo "  姓名     : 模擬管理員\n";
+    echo "  Email    : mockadmin@nuk.edu.tw\n";
     echo "  密碼     : {$PLAIN_PASSWORD}\n";
     echo "  類型     : SystemAdministrator\n";
     echo "  已驗證   : 是\n\n";

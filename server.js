@@ -3,7 +3,7 @@ const mysql = require('mysql2');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
-const nodemailer = require('nodemailer');
+// nodemailer 已停用（Mock 模式）
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -70,61 +70,25 @@ pool.getConnection((err, connection) => {
 });
 
 // ============================================
-// Email 發信模組（Nodemailer + Gmail SMTP）
-// .env 需設定：SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS
+// Email 模組（Mock 模式 — 不連線 SMTP，直接印到終端機）
 // ============================================
 
-const emailTransporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER || '',
-    pass: process.env.SMTP_PASS || ''
-  },
-  logger: true,  // 印出所有 SMTP 連線對話到 console
-  debug: true    // 印出完整 SMTP 指令往返（DATA / AUTH 等細節）
-});
-
-// 啟動時立即驗證 SMTP 連線，失敗就在 console 給出明確錯誤碼
-emailTransporter.verify((err) => {
-  if (err) {
-    console.error('\n====================================================');
-    console.error('[SMTP 連線驗證失敗] 伺服器啟動後無法連上 Gmail SMTP');
-    console.error('  錯誤碼  :', err.code);
-    console.error('  錯誤訊息:', err.message);
-    console.error('  SMTP_USER:', process.env.SMTP_USER || '(未設定)');
-    console.error('  SMTP_PASS 長度:', (process.env.SMTP_PASS || '').length, '字元');
-    console.error('====================================================\n');
-  } else {
-    console.log('[SMTP] ✓ Gmail SMTP 連線驗證成功，可正常發信');
-    console.log(`[SMTP]   發信帳號：${process.env.SMTP_USER}`);
-  }
-});
-
 async function sendEmail(to, subject, html) {
-  const ts = new Date().toISOString();
-  try {
-    await emailTransporter.sendMail({
-      from: `"ScholarLink" <${process.env.SMTP_USER || 'noreply@scholarlink.com'}>`,
-      to,
-      subject,
-      html
-    });
-    console.log(`[郵件] ${ts} ✓ 發信成功 → ${to}`);
-    return true;
-  } catch (err) {
-    console.error('\n========== [SMTP 發信失敗] ==========');
-    console.error('  收件人  :', to);
-    console.error('  主旨    :', subject);
-    console.error('  錯誤碼  :', err.code);
-    console.error('  SMTP指令:', err.command);
-    console.error('  SMTP回應:', err.response);
-    console.error('  完整訊息:', err.message);
-    console.error('  Stack   :\n', err.stack);
-    console.error('======================================\n');
-    return false;
+  const plainText = html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  const summary   = plainText.length > 120 ? plainText.substring(0, 120) + '…' : plainText;
+  const otpMatch  = html.match(/\b(\d{6})\b/);
+
+  console.log('\n\x1b[46m\x1b[30m ┌──────────────────────────────────────────────────────┐ \x1b[0m');
+  console.log('\x1b[46m\x1b[30m │           [MOCK EMAIL NOTIFICATION]                  │ \x1b[0m');
+  console.log('\x1b[46m\x1b[30m └──────────────────────────────────────────────────────┘ \x1b[0m');
+  console.log(`\x1b[36m  收件人 :\x1b[0m ${to}`);
+  console.log(`\x1b[36m  主旨   :\x1b[0m ${subject}`);
+  console.log(`\x1b[36m  摘要   :\x1b[0m ${summary}`);
+  if (otpMatch) {
+    console.log(`\x1b[33m\x1b[1m  OTP    : ${otpMatch[1]}  ← 複製此碼貼到網頁\x1b[0m`);
   }
+  console.log('\x1b[46m\x1b[30m ─────────────────────────────────────────────────────── \x1b[0m\n');
+  return true;
 }
 
 function generateOTP() {
@@ -139,8 +103,8 @@ function debugOTP(context, userId, otp) {
   console.log('\x1b[43m\x1b[30m ====================================== \x1b[0m\n');
 }
 
-// Gmail 格式嚴格正則
-const GMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@gmail\.com$/;
+// 通用 Email 格式正則（放寬為任意網域）
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
 
 // ============================================
 // 通用：使用者查詢 & 帳號管理
@@ -183,15 +147,6 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ success: false, message: '帳號或密碼錯誤' });
     }
 
-    if (!user.email_verified) {
-      return res.status(403).json({
-        success: false,
-        message: '請先完成電子郵件驗證',
-        needVerify: true,
-        userId: user.id
-      });
-    }
-
     res.json({
       success: true,
       data: { id: user.id, name: user.name, email: user.email, type: user.type }
@@ -216,9 +171,9 @@ app.post('/api/user', async (req, res) => {
       return res.status(400).json({ success: false, message: '無效的角色' });
     }
 
-    // 嚴格 Gmail 格式驗證（後端雙重把關）
-    if (!GMAIL_REGEX.test(email)) {
-      return res.status(400).json({ success: false, message: 'Email 必須為 @gmail.com 格式' });
+    // Email 格式基本驗證（任意網域）
+    if (!EMAIL_REGEX.test(email)) {
+      return res.status(400).json({ success: false, message: 'Email 格式不正確' });
     }
 
     // 學生與教師必須填寫科系
@@ -238,13 +193,9 @@ app.post('/api/user', async (req, res) => {
     const rawPassword = password || (id + Math.random().toString(36).slice(-4).toUpperCase() + '!');
     const hashedPassword = await bcrypt.hash(rawPassword, 12);
 
-    // 生成 6 位數 OTP
-    const otp = generateOTP();
-    debugOTP('帳號啟用', id, otp);
-
     await promisePool.query(
-      'INSERT INTO User (id, name, email, type, department, password, email_verified, verification_code) VALUES (?, ?, ?, ?, ?, ?, 0, ?)',
-      [id, name, email, type, finalDepartment, hashedPassword, otp]
+      'INSERT INTO User (id, name, email, type, department, password, email_verified, verification_code) VALUES (?, ?, ?, ?, ?, ?, 1, NULL)',
+      [id, name, email, type, finalDepartment, hashedPassword]
     );
 
     if (type === 'Student') {
@@ -255,22 +206,17 @@ app.post('/api/user', async (req, res) => {
       }
     }
 
-    // 非同步發送帳號啟用驗證信（失敗時 Mock 寫入日誌）
-    const emailHtml = `
+    sendEmail(email, 'ScholarLink 帳號建立通知', `
       <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px;">
-        <h2 style="color:#667eea;margin-top:0;">ScholarLink 帳號啟用驗證</h2>
-        <p>您好 <strong>${name}</strong>，</p>
-        <p>您的帳號已由管理員建立，請輸入以下 <strong>6 位數驗證碼</strong>完成帳號啟用：</p>
-        <div style="font-size:36px;font-weight:bold;letter-spacing:10px;color:#764ba2;padding:20px;background:#f5f5f5;border-radius:8px;text-align:center;">${otp}</div>
-        <p style="margin-top:20px;">帳號 ID：<code>${id}</code><br>初始密碼：<code>${rawPassword}</code></p>
-        <p style="color:#9ca3af;font-size:12px;margin-top:16px;">此驗證碼僅使用一次，請登入後儘快修改密碼。</p>
+        <h2 style="color:#667eea;margin-top:0;">ScholarLink 帳號已建立</h2>
+        <p>您好 <strong>${name}</strong>，您的帳號已由管理員建立，可直接登入。</p>
+        <p>帳號 ID：<code>${id}</code><br>初始密碼：<code>${rawPassword}</code></p>
       </div>
-    `;
-    sendEmail(email, 'ScholarLink 帳號啟用驗證碼', emailHtml).catch(() => {});
+    `).catch(() => {});
 
     res.json({
       success: true,
-      message: '帳號新增成功，驗證碼已寄送至 Email',
+      message: '帳號新增成功',
       data: { id, name, email, type, department: finalDepartment, tempPassword: rawPassword }
     });
   } catch (error) {
@@ -1113,7 +1059,7 @@ app.get('/api/admin/documents', async (req, res) => {
   }
 });
 
-// POST /api/users/forgot-password - 請求密碼重設驗證碼
+// POST /api/users/forgot-password - 驗證帳號 ID 與 Email 是否吻合（無 OTP）
 app.post('/api/users/forgot-password', async (req, res) => {
   try {
     const { id, email } = req.body;
@@ -1122,7 +1068,7 @@ app.post('/api/users/forgot-password', async (req, res) => {
     }
 
     const [rows] = await promisePool.query(
-      'SELECT id, name, email FROM User WHERE id = ? AND email = ? LIMIT 1',
+      'SELECT id FROM User WHERE id = ? AND email = ? LIMIT 1',
       [id, email.trim()]
     );
 
@@ -1130,38 +1076,18 @@ app.post('/api/users/forgot-password', async (req, res) => {
       return res.status(404).json({ success: false, message: '帳號 ID 與 Email 不吻合，請確認後再試' });
     }
 
-    const user = rows[0];
-    const otp  = generateOTP();
-    debugOTP('密碼重設', user.id, otp);
-
-    await promisePool.query(
-      'UPDATE User SET verification_code = ? WHERE id = ?',
-      [otp, user.id]
-    );
-
-    const emailHtml = `
-      <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px;">
-        <h2 style="color:#667eea;margin-top:0;">ScholarLink 密碼重設驗證</h2>
-        <p>您好 <strong>${user.name}</strong>，</p>
-        <p>我們收到您的密碼重設請求，請輸入以下 <strong>6 位數驗證碼</strong>完成重設：</p>
-        <div style="font-size:36px;font-weight:bold;letter-spacing:10px;color:#764ba2;padding:20px;background:#f5f5f5;border-radius:8px;text-align:center;">${otp}</div>
-        <p style="color:#9ca3af;font-size:12px;margin-top:16px;">若非本人操作，請忽略此郵件，您的密碼不會被更改。</p>
-      </div>
-    `;
-    sendEmail(user.email, 'ScholarLink 密碼重設驗證碼', emailHtml).catch(() => {});
-
-    res.json({ success: true, message: '驗證碼已寄送至您的 Gmail，請於 10 分鐘內完成重設' });
+    res.json({ success: true, message: '身份驗證成功，請輸入新密碼' });
   } catch (error) {
     console.error('忘記密碼錯誤:', error);
     res.status(500).json({ success: false, message: '伺服器錯誤', error: error.message });
   }
 });
 
-// POST /api/users/reset-password - 核對驗證碼並更新密碼
+// POST /api/users/reset-password - 驗證 ID+Email 後直接更新密碼（無 OTP）
 app.post('/api/users/reset-password', async (req, res) => {
   try {
-    const { id, code, newPassword } = req.body;
-    if (!id || !code || !newPassword) {
+    const { id, email, newPassword } = req.body;
+    if (!id || !email || !newPassword) {
       return res.status(400).json({ success: false, message: '缺少必要參數' });
     }
     if (String(newPassword).length < 6) {
@@ -1169,23 +1095,16 @@ app.post('/api/users/reset-password', async (req, res) => {
     }
 
     const [rows] = await promisePool.query(
-      'SELECT verification_code FROM User WHERE id = ? LIMIT 1',
-      [id]
+      'SELECT id FROM User WHERE id = ? AND email = ? LIMIT 1',
+      [id, email.trim()]
     );
 
     if (rows.length === 0) {
-      return res.status(404).json({ success: false, message: '找不到使用者' });
-    }
-
-    if (!rows[0].verification_code || rows[0].verification_code !== String(code).trim()) {
-      return res.status(400).json({ success: false, message: '驗證碼錯誤或已過期，請重新申請' });
+      return res.status(404).json({ success: false, message: '帳號 ID 與 Email 不吻合' });
     }
 
     const hashed = await bcrypt.hash(String(newPassword), 12);
-    await promisePool.query(
-      'UPDATE User SET password = ?, verification_code = NULL WHERE id = ?',
-      [hashed, id]
-    );
+    await promisePool.query('UPDATE User SET password = ? WHERE id = ?', [hashed, id]);
 
     res.json({ success: true, message: '密碼重設成功，請使用新密碼登入' });
   } catch (error) {

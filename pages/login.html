@@ -169,30 +169,27 @@
     </div>
   </div>
 
-  <!-- 忘記密碼 Modal（兩步驟：請求驗證碼 → 設定新密碼）-->
+  <!-- 忘記密碼 Modal（兩步驟：驗證身份 → 設定新密碼）-->
   <div class="modal-overlay" id="forgotModal">
     <div class="modal-box" style="max-width:400px;text-align:left;">
       <!-- 步驟一：輸入帳號與 Email -->
       <div id="forgotStep1">
         <h2 style="color:#667eea;margin-bottom:8px;font-size:20px;">🔑 忘記密碼</h2>
-        <p style="color:#555;font-size:14px;margin-bottom:16px;">輸入您的帳號 ID 與註冊 Gmail，系統將寄送重設驗證碼。</p>
+        <p style="color:#555;font-size:14px;margin-bottom:16px;">輸入帳號 ID 與綁定的 Email，驗證通過後即可直接設定新密碼。</p>
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;">帳號 ID</label>
-        <input type="text" id="forgotId" placeholder="例：S001、T001" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;box-sizing:border-box;margin-bottom:10px;">
-        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;">註冊 Gmail</label>
-        <input type="email" id="forgotEmail" placeholder="user@gmail.com" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;box-sizing:border-box;margin-bottom:10px;">
+        <input type="text" id="forgotId" placeholder="例：S001、T001、ADMIN002" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;box-sizing:border-box;margin-bottom:10px;">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;">綁定 Email</label>
+        <input type="email" id="forgotEmail" placeholder="例：mockadmin@nuk.edu.tw" style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;box-sizing:border-box;margin-bottom:10px;">
         <div id="forgotStep1Error" style="color:#c33;font-size:13px;margin-bottom:10px;display:none;"></div>
         <div style="display:flex;gap:8px;">
-          <button class="btn" onclick="requestResetCode()" style="flex:1;">寄送驗證碼</button>
+          <button class="btn" onclick="verifyIdentity()" style="flex:1;">驗證身份</button>
           <button class="btn" onclick="closeForgotPassword()" style="background:#f5f5f5;color:#333;flex:0 0 auto;padding:14px 16px;font-size:14px;">取消</button>
         </div>
       </div>
-      <!-- 步驟二：輸入驗證碼與新密碼 -->
+      <!-- 步驟二：直接輸入新密碼 -->
       <div id="forgotStep2" style="display:none;">
-        <h2 style="color:#667eea;margin-bottom:8px;font-size:20px;">✉️ 重設密碼</h2>
-        <p style="color:#555;font-size:14px;margin-bottom:16px;">請輸入收到的 6 位數驗證碼，並設定新密碼。</p>
-        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;">6 位數驗證碼</label>
-        <input type="text" id="resetCode" maxlength="6" placeholder="000000" inputmode="numeric"
-          style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:22px;letter-spacing:8px;text-align:center;box-sizing:border-box;margin-bottom:10px;">
+        <h2 style="color:#667eea;margin-bottom:8px;font-size:20px;">🔒 設定新密碼</h2>
+        <p style="color:#555;font-size:14px;margin-bottom:16px;">身份驗證成功，請輸入您的新密碼。</p>
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;">新密碼</label>
         <input type="password" id="newPassword" placeholder="至少 6 個字元" minlength="6"
           style="width:100%;padding:10px;border:2px solid #ddd;border-radius:8px;font-size:15px;box-sizing:border-box;margin-bottom:10px;">
@@ -208,22 +205,8 @@
     </div>
   </div>
 
-  <!-- OTP 驗證 Modal（未完成 Email 驗證時自動跳出）-->
-  <div class="modal-overlay" id="otpModal">
-    <div class="modal-box">
-      <h2>📧 Email 驗證</h2>
-      <p>請輸入寄送到您 Gmail 的 <strong>6 位數驗證碼</strong>，完成帳號啟用。</p>
-      <input type="text" class="otp-input" id="otpInput" maxlength="6" placeholder="000000" inputmode="numeric">
-      <div class="otp-error" id="otpError"></div>
-      <button class="btn" onclick="submitOTP()" style="margin-bottom:10px;">確認驗證</button>
-      <br>
-      <button class="btn" onclick="closeOTP()" style="background:#f5f5f5;color:#333;width:auto;padding:10px 20px;font-size:14px;">取消</button>
-    </div>
-  </div>
-
   <script>
     const API_BASE = '/scholarship/api';
-    let pendingVerifyUserId = null;
 
     function fillUserId(id) {
       document.getElementById('userId').value = id;
@@ -235,7 +218,6 @@
       const userId   = document.getElementById('userId').value.trim();
       const password = document.getElementById('password').value;
       const alertEl  = document.getElementById('alert');
-
       alertEl.style.display = 'none';
 
       try {
@@ -244,12 +226,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: userId, password })
         });
-
         const result = await response.json();
 
         if (result.success) {
           const user = result.data;
-
           sessionStorage.setItem('currentUser', JSON.stringify({
             id: user.id,
             name: user.name || '使用者',
@@ -262,22 +242,13 @@
             SystemAdministrator: 'admin_scholarships.html',
             Organization: 'organization_applications.html'
           };
-
           const nextPage = redirects[user.type] || 'login.html';
           const fullUrl  = `${window.location.origin}/scholarship/pages/${nextPage}`;
 
           alertEl.className = 'alert success';
           alertEl.textContent = `登入成功！歡迎 ${user.name || user.id}`;
           alertEl.style.display = 'block';
-
           setTimeout(() => { window.location.href = fullUrl; }, 600);
-
-        } else if (result.needVerify) {
-          // 帳號尚未完成 Email 驗證 → 跳出 OTP Modal
-          pendingVerifyUserId = result.userId || userId;
-          document.getElementById('otpModal').classList.add('active');
-          document.getElementById('otpInput').value = '';
-          document.getElementById('otpError').style.display = 'none';
 
         } else {
           alertEl.className = 'alert error';
@@ -292,56 +263,17 @@
       }
     }
 
-    async function submitOTP() {
-      const code    = document.getElementById('otpInput').value.trim();
-      const errEl   = document.getElementById('otpError');
-      errEl.style.display = 'none';
-
-      if (!/^\d{6}$/.test(code)) {
-        errEl.textContent = '請輸入 6 位數字驗證碼';
-        errEl.style.display = 'block';
-        return;
-      }
-
-      try {
-        const res  = await fetch(`${API_BASE}/users/verify-otp`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: pendingVerifyUserId, code })
-        });
-        const data = await res.json();
-
-        if (data.success) {
-          document.getElementById('otpModal').classList.remove('active');
-          const alertEl = document.getElementById('alert');
-          alertEl.className = 'alert success';
-          alertEl.textContent = '驗證成功！請重新登入以進入系統';
-          alertEl.style.display = 'block';
-        } else {
-          errEl.textContent = data.message || '驗證失敗';
-          errEl.style.display = 'block';
-        }
-      } catch (err) {
-        errEl.textContent = '伺服器錯誤，請稍後再試';
-        errEl.style.display = 'block';
-      }
-    }
-
-    function closeOTP() {
-      document.getElementById('otpModal').classList.remove('active');
-      pendingVerifyUserId = null;
-    }
-
-    // ── 忘記密碼流程 ─────────────────────────────────────────
-    let forgotUserId = null;
+    // ── 忘記密碼流程（直接重設，無 OTP）────────────────────────
+    let forgotUserId  = null;
+    let forgotEmail   = null;
 
     function openForgotPassword(e) {
       e.preventDefault();
       forgotUserId = null;
-      document.getElementById('forgotId').value = '';
-      document.getElementById('forgotEmail').value = '';
-      document.getElementById('resetCode').value = '';
-      document.getElementById('newPassword').value = '';
+      forgotEmail  = null;
+      document.getElementById('forgotId').value       = '';
+      document.getElementById('forgotEmail').value    = '';
+      document.getElementById('newPassword').value    = '';
       document.getElementById('confirmPassword').value = '';
       document.getElementById('forgotStep1Error').style.display = 'none';
       document.getElementById('forgotStep2Error').style.display = 'none';
@@ -354,14 +286,14 @@
       document.getElementById('forgotModal').classList.remove('active');
     }
 
-    async function requestResetCode() {
+    async function verifyIdentity() {
       const id    = document.getElementById('forgotId').value.trim();
       const email = document.getElementById('forgotEmail').value.trim();
       const errEl = document.getElementById('forgotStep1Error');
       errEl.style.display = 'none';
 
       if (!id || !email) {
-        errEl.textContent = '請輸入帳號 ID 與 Gmail';
+        errEl.textContent = '請輸入帳號 ID 與 Email';
         errEl.style.display = 'block';
         return;
       }
@@ -376,10 +308,11 @@
 
         if (data.success) {
           forgotUserId = id;
+          forgotEmail  = email;
           document.getElementById('forgotStep1').style.display = 'none';
           document.getElementById('forgotStep2').style.display = 'block';
         } else {
-          errEl.textContent = data.message || '請求失敗，請確認帳號與 Email 是否正確';
+          errEl.textContent = data.message || '帳號 ID 與 Email 不吻合';
           errEl.style.display = 'block';
         }
       } catch (err) {
@@ -389,17 +322,11 @@
     }
 
     async function submitResetPassword() {
-      const code        = document.getElementById('resetCode').value.trim();
       const newPassword = document.getElementById('newPassword').value;
       const confirm     = document.getElementById('confirmPassword').value;
       const errEl       = document.getElementById('forgotStep2Error');
       errEl.style.display = 'none';
 
-      if (!/^\d{6}$/.test(code)) {
-        errEl.textContent = '請輸入 6 位數字驗證碼';
-        errEl.style.display = 'block';
-        return;
-      }
       if (newPassword.length < 6) {
         errEl.textContent = '新密碼至少需要 6 個字元';
         errEl.style.display = 'block';
@@ -415,7 +342,7 @@
         const res  = await fetch(`${API_BASE}/users/reset-password`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: forgotUserId, code, newPassword })
+          body: JSON.stringify({ id: forgotUserId, email: forgotEmail, newPassword })
         });
         const data = await res.json();
 
@@ -426,7 +353,7 @@
           alertEl.textContent = '密碼重設成功！請使用新密碼登入';
           alertEl.style.display = 'block';
         } else {
-          errEl.textContent = data.message || '驗證失敗，請確認驗證碼是否正確';
+          errEl.textContent = data.message || '重設失敗，請重新嘗試';
           errEl.style.display = 'block';
         }
       } catch (err) {

@@ -66,55 +66,27 @@ function normalize_identity($identity) {
 }
 
 // ============================================================
-// 郵件發信模組（PHPMailer 優先，fallback error_log Mock）
-// config.php 需設定：SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS
+// 郵件發信模組（Mock 模式 — 不連線 SMTP，直接寫入 Apache error log）
 // ============================================================
 
 function sendEmail($to, $subject, $html) {
-    $ts = date('Y-m-d H:i:s');
-    $smtpHost = defined('SMTP_HOST') ? SMTP_HOST : (getenv('SMTP_HOST') ?: 'smtp.gmail.com');
-    $smtpPort = defined('SMTP_PORT') ? (int)SMTP_PORT : (int)(getenv('SMTP_PORT') ?: 587);
-    $smtpUser = defined('SMTP_USER') ? SMTP_USER : (getenv('SMTP_USER') ?: '');
-    $smtpPass = defined('SMTP_PASS') ? SMTP_PASS : (getenv('SMTP_PASS') ?: '');
+    $ts       = date('Y-m-d H:i:s');
+    $plain    = trim(preg_replace('/\s+/', ' ', strip_tags($html)));
+    $summary  = mb_strlen($plain) > 120 ? mb_substr($plain, 0, 120) . '…' : $plain;
 
-    // 嘗試 PHPMailer（需執行 composer require phpmailer/phpmailer）
-    $autoload = __DIR__ . '/../vendor/autoload.php';
-    if (!empty($smtpUser) && file_exists($autoload)) {
-        try {
-            require_once $autoload;
-            $mail = new PHPMailer\PHPMailer\PHPMailer(true);
-            $mail->isSMTP();
-            $mail->SMTPDebug  = 2;                    // 詳細 SMTP 對話記錄
-            $mail->Debugoutput = 'error_log';         // 輸出到 Apache error log
-            $mail->Host       = $smtpHost;
-            $mail->SMTPAuth   = true;
-            $mail->Username   = $smtpUser;
-            $mail->Password   = $smtpPass;
-            $mail->SMTPSecure = PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port       = $smtpPort;
-            $mail->CharSet    = 'UTF-8';
-            $mail->setFrom($smtpUser, 'ScholarLink');
-            $mail->addAddress($to);
-            $mail->isHTML(true);
-            $mail->Subject = $subject;
-            $mail->Body    = $html;
-            $mail->send();
-            error_log("[郵件] $ts ✓ 發信成功 → $to");
-            return true;
-        } catch (Exception $e) {
-            error_log("========== [PHP SMTP 發信失敗] ==========");
-            error_log("[郵件-SMTP失敗] $ts | 收件人:$to");
-            error_log("  ErrorInfo : " . $mail->ErrorInfo);
-            error_log("  Exception : " . $e->getMessage());
-            error_log("  SMTP_USER : $smtpUser");
-            error_log("  SMTP_PASS 長度 : " . strlen($smtpPass) . " 字元");
-            error_log("=========================================");
-        }
+    // 從 HTML 提取 6 位數驗證碼（若有）
+    $otpLine = '';
+    if (preg_match('/\b(\d{6})\b/', $html, $m)) {
+        $otpLine = "\n  OTP     : {$m[1]}  ← 複製此碼貼到網頁";
     }
 
-    // Mock fallback：完整信件內容寫入 error_log，確保開發流程閉環
-    error_log("[郵件-Mock] $ts | 收件人:$to | 主旨:$subject | 內文:" . strip_tags($html));
-    return false;
+    error_log("┌──────────────────────────────────────────────────────");
+    error_log("│  [MOCK EMAIL NOTIFICATION]  $ts");
+    error_log("│  收件人 : $to");
+    error_log("│  主旨   : $subject");
+    error_log("│  摘要   : $summary$otpLine");
+    error_log("└──────────────────────────────────────────────────────");
+    return true;
 }
 
 function debugOTP(string $context, string $userId, string $otp): void {
@@ -129,8 +101,8 @@ function generateOTP() {
     return str_pad((string)random_int(100000, 999999), 6, '0', STR_PAD_LEFT);
 }
 
-// Gmail 嚴格格式正則（後端強制過濾）
-define('GMAIL_REGEX', '/^[a-zA-Z0-9._%+\-]+@gmail\.com$/');
+// 通用 Email 格式正則（放寬為任意網域）
+define('EMAIL_REGEX', '/^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/');
 
 // ============================================================
 // 路由: POST /login - 登入驗證（LoginManager C002）
@@ -179,16 +151,7 @@ if ($method === 'POST' && isset($segments[0]) && $segments[0] === 'login') {
             exit();
         }
 
-        if (!$user['email_verified']) {
-            http_response_code(403);
-            echo json_encode([
-                'success'    => false,
-                'message'    => '請先完成電子郵件驗證',
-                'needVerify' => true,
-                'userId'     => $user['id']
-            ]);
-            exit();
-        }
+        // email_verified 攔截已移除（帳號密碼制，無需 Email 驗證）
 
         echo json_encode([
             'success' => true,
@@ -1462,10 +1425,10 @@ else if ($method === 'POST' && $segments[0] === 'user' && !isset($segments[1])) 
             exit();
         }
 
-        // 嚴格 Gmail 格式驗證（後端強制）
-        if (!preg_match(GMAIL_REGEX, $email)) {
+        // Email 格式基本驗證（任意網域）
+        if (!preg_match(EMAIL_REGEX, $email)) {
             http_response_code(400);
-            echo json_encode(['success' => false, 'message' => 'Email 必須為 @gmail.com 格式']);
+            echo json_encode(['success' => false, 'message' => 'Email 格式不正確']);
             exit();
         }
 
@@ -1495,16 +1458,12 @@ else if ($method === 'POST' && $segments[0] === 'user' && !isset($segments[1])) 
                          : ($id . strtoupper(substr(bin2hex(random_bytes(3)), 0, 4)) . '!');
         $hashedPassword = password_hash($rawPassword, PASSWORD_DEFAULT);
 
-        // 生成 6 位數 OTP
-        $otp = generateOTP();
-        debugOTP('帳號啟用', $id, $otp);
-
-        // 新增使用者（含密碼、驗證狀態、OTP）
+        // 新增使用者（直接設為已驗證，無需 OTP）
         $stmt = $pdo->prepare("
             INSERT INTO User (id, name, email, type, department, password, email_verified, verification_code)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 1, NULL)
         ");
-        $stmt->execute([$id, $name, $email, $type, $department, $hashedPassword, $otp]);
+        $stmt->execute([$id, $name, $email, $type, $department, $hashedPassword]);
 
         // 如果是學生，建立 Student 記錄
         if ($type === 'Student') {
@@ -1516,18 +1475,14 @@ else if ($method === 'POST' && $segments[0] === 'user' && !isset($segments[1])) 
             }
         }
 
-        // 非同步發送帳號啟用驗證信（失敗時 Mock 寫入 error_log）
         $emailHtml = "
           <div style='font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px;'>
-            <h2 style='color:#667eea;margin-top:0;'>ScholarLink 帳號啟用驗證</h2>
-            <p>您好 <strong>{$name}</strong>，</p>
-            <p>您的帳號已由管理員建立，請輸入以下 <strong>6 位數驗證碼</strong>完成帳號啟用：</p>
-            <div style='font-size:36px;font-weight:bold;letter-spacing:10px;color:#764ba2;padding:20px;background:#f5f5f5;border-radius:8px;text-align:center;'>{$otp}</div>
-            <p style='margin-top:20px;'>帳號 ID：<code>{$id}</code><br>初始密碼：<code>{$rawPassword}</code></p>
-            <p style='color:#9ca3af;font-size:12px;margin-top:16px;'>此驗證碼僅使用一次，請登入後儘快修改密碼。</p>
+            <h2 style='color:#667eea;margin-top:0;'>ScholarLink 帳號已建立</h2>
+            <p>您好 <strong>{$name}</strong>，您的帳號已由管理員建立，可直接登入。</p>
+            <p>帳號 ID：<code>{$id}</code><br>初始密碼：<code>{$rawPassword}</code></p>
           </div>
         ";
-        sendEmail($email, 'ScholarLink 帳號啟用驗證碼', $emailHtml);
+        sendEmail($email, 'ScholarLink 帳號建立通知', $emailHtml);
 
         echo json_encode([
             'success' => true,
@@ -1627,7 +1582,7 @@ else if ($method === 'POST' && ($segments[0] ?? '') === 'users' && ($segments[1]
     }
 }
 
-// 路由: POST /users/forgot-password - 請求密碼重設驗證碼
+// 路由: POST /users/forgot-password - 驗證帳號 ID 與 Email（無 OTP）
 else if ($method === 'POST' && ($segments[0] ?? '') === 'users' && ($segments[1] ?? '') === 'forgot-password') {
     $data  = json_decode(file_get_contents('php://input'), true);
     $id    = $data['id']    ?? null;
@@ -1640,48 +1595,29 @@ else if ($method === 'POST' && ($segments[0] ?? '') === 'users' && ($segments[1]
     }
 
     try {
-        $stmt = $pdo->prepare('SELECT id, name, email FROM User WHERE id = ? AND email = ? LIMIT 1');
+        $stmt = $pdo->prepare('SELECT id FROM User WHERE id = ? AND email = ? LIMIT 1');
         $stmt->execute([$id, trim($email)]);
-        $user = $stmt->fetch();
-
-        if (!$user) {
+        if (!$stmt->fetch()) {
             http_response_code(404);
             echo json_encode(['success' => false, 'message' => '帳號 ID 與 Email 不吻合，請確認後再試']);
             exit();
         }
 
-        $otp = generateOTP();
-        debugOTP('密碼重設', $user['id'], $otp);
-        $upd = $pdo->prepare('UPDATE User SET verification_code = ? WHERE id = ?');
-        $upd->execute([$otp, $user['id']]);
-
-        $name     = $user['name'];
-        $emailHtml = "
-          <div style='font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px;'>
-            <h2 style='color:#667eea;margin-top:0;'>ScholarLink 密碼重設驗證</h2>
-            <p>您好 <strong>{$name}</strong>，</p>
-            <p>我們收到您的密碼重設請求，請輸入以下 <strong>6 位數驗證碼</strong>完成重設：</p>
-            <div style='font-size:36px;font-weight:bold;letter-spacing:10px;color:#764ba2;padding:20px;background:#f5f5f5;border-radius:8px;text-align:center;'>{$otp}</div>
-            <p style='color:#9ca3af;font-size:12px;margin-top:16px;'>若非本人操作，請忽略此郵件，您的密碼不會被更改。</p>
-          </div>
-        ";
-        sendEmail($user['email'], 'ScholarLink 密碼重設驗證碼', $emailHtml);
-
-        echo json_encode(['success' => true, 'message' => '驗證碼已寄送至您的 Gmail，請於 10 分鐘內完成重設']);
+        echo json_encode(['success' => true, 'message' => '身份驗證成功，請輸入新密碼']);
     } catch (PDOException $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
     }
 }
 
-// 路由: POST /users/reset-password - 核對驗證碼並更新密碼
+// 路由: POST /users/reset-password - 驗證 ID+Email 後直接更新密碼（無 OTP）
 else if ($method === 'POST' && ($segments[0] ?? '') === 'users' && ($segments[1] ?? '') === 'reset-password') {
     $data        = json_decode(file_get_contents('php://input'), true);
     $id          = $data['id']          ?? null;
-    $code        = $data['code']        ?? null;
+    $email       = $data['email']       ?? null;
     $newPassword = $data['newPassword'] ?? null;
 
-    if (!$id || !$code || !$newPassword) {
+    if (!$id || !$email || !$newPassword) {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => '缺少必要參數']);
         exit();
@@ -1693,24 +1629,16 @@ else if ($method === 'POST' && ($segments[0] ?? '') === 'users' && ($segments[1]
     }
 
     try {
-        $stmt = $pdo->prepare('SELECT verification_code FROM User WHERE id = ? LIMIT 1');
-        $stmt->execute([$id]);
-        $user = $stmt->fetch();
-
-        if (!$user) {
+        $stmt = $pdo->prepare('SELECT id FROM User WHERE id = ? AND email = ? LIMIT 1');
+        $stmt->execute([$id, trim($email)]);
+        if (!$stmt->fetch()) {
             http_response_code(404);
-            echo json_encode(['success' => false, 'message' => '找不到使用者']);
-            exit();
-        }
-
-        if (empty($user['verification_code']) || $user['verification_code'] !== trim((string)$code)) {
-            http_response_code(400);
-            echo json_encode(['success' => false, 'message' => '驗證碼錯誤或已過期，請重新申請']);
+            echo json_encode(['success' => false, 'message' => '帳號 ID 與 Email 不吻合']);
             exit();
         }
 
         $hashed = password_hash($newPassword, PASSWORD_DEFAULT);
-        $upd    = $pdo->prepare('UPDATE User SET password = ?, verification_code = NULL WHERE id = ?');
+        $upd    = $pdo->prepare('UPDATE User SET password = ? WHERE id = ?');
         $upd->execute([$hashed, $id]);
 
         echo json_encode(['success' => true, 'message' => '密碼重設成功，請使用新密碼登入']);
