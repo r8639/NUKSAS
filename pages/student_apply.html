@@ -173,6 +173,11 @@
             <input type="text" id="scholarshipName" disabled style="opacity:0.6;" required>
             <p class="muted">此欄位已自動填入您選擇的獎學金</p>
           </div>
+          <div id="requiredDocsNotice" style="display:none;padding:12px;border-radius:10px;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.35);">
+            <p style="margin:0 0 6px;font-weight:700;color:#fbbf24;font-size:13px;">⚠️ 本獎學金申請須上傳以下文件</p>
+            <div id="requiredDocsList" style="font-size:13px;color:#e5e7eb;"></div>
+            <p class="muted" style="margin:8px 0 0;">請先至「個人資料」頁面上傳所需檔案，再回此頁申請。</p>
+          </div>
           <div>
             <label>GPA</label>
             <input type="number" id="gpa" step="0.01" min="0" max="4" placeholder="例如：3.8" required>
@@ -181,15 +186,22 @@
             <label>成績分數</label>
             <input type="number" id="score" step="0.01" min="0" max="100" placeholder="例如：85.5" required>
           </div>
+          <div style="padding:12px;border-radius:10px;background:rgba(125,211,252,0.08);border:1px solid rgba(125,211,252,0.2);">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin:0;">
+              <input type="checkbox" id="requiresRecommendation" style="width:18px;height:18px;accent-color:var(--accent-strong);">
+              <span style="font-size:14px;">需要導師推薦信</span>
+            </label>
+            <p class="muted" style="margin:6px 0 0 28px;">勾選後，申請將先由您的導師審核與填寫推薦信，再轉交機構審查。</p>
+          </div>
           <div class="actions">
             <a class="btn" href="student_dashboard.html">取消</a>
-            <button class="btn primary" type="submit">送出申請</button>
+            <button class="btn primary" type="submit" id="submitBtn">送出申請</button>
           </div>
         </form>
         <div class="card" style="background: rgba(34,211,238,0.06); border-color: rgba(34,211,238,0.4);">
           <div class="section-title" style="margin-bottom:8px;">填寫提示</div>
           <p class="muted">• 送出前請確認所有必填欄位已完成</p>
-          <p class="muted">• 若需導師推薦，系統將自動發送邀請</p>
+          <p class="muted">• 勾選「需要導師推薦信」後，申請先由導師審核</p>
           <p class="muted">• 申請送出後可在「申請結果」查看進度</p>
           <p class="muted">• 若需補件，系統會以 Email 通知</p>
         </div>
@@ -209,64 +221,86 @@
     }
 
     const API_BASE = '/scholarship/api';
+    const CAT_LABELS = { identity_proof: '身份證明', transcript: '成績單', award_certificate: '參賽得獎' };
 
-    // 從 URL 取得獎學金名稱
     function getScholarshipFromURL() {
-      const urlParams = new URLSearchParams(window.location.search);
-      return urlParams.get('scholarship');
+      return new URLSearchParams(window.location.search).get('scholarship');
     }
 
-    // 頁面載入時自動填入獎學金名稱
+    async function loadScholarshipInfo(name) {
+      try {
+        const res = await fetch(`${API_BASE}/scholarships?admin=true`);
+        const result = await res.json();
+        if (!result.success) return;
+        const sch = result.data.find(s => s.name === name);
+        if (!sch || !sch.required_documents) return;
+        const required = sch.required_documents.split(',').map(s => s.trim()).filter(Boolean);
+        if (required.length === 0) return;
+        document.getElementById('requiredDocsNotice').style.display = 'block';
+        document.getElementById('requiredDocsList').innerHTML =
+          required.map(c => `• ${CAT_LABELS[c] || c}`).join('<br>');
+      } catch(e) { /* 忽略 */ }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
       const scholarshipName = getScholarshipFromURL();
       const scholarshipInput = document.getElementById('scholarshipName');
-      
       if (scholarshipName && scholarshipInput) {
         scholarshipInput.value = decodeURIComponent(scholarshipName);
+        loadScholarshipInfo(decodeURIComponent(scholarshipName));
       } else if (scholarshipInput) {
-        // 如果沒有從 URL 取得，顯示提示
         scholarshipInput.value = '請從獎學金列表選擇申請';
       }
     });
 
-    // 提交申請
     async function submitApplication(event) {
       event.preventDefault();
-      
+
       const scholarshipName = document.getElementById('scholarshipName').value;
       const gpa = parseFloat(document.getElementById('gpa').value);
       const score = parseFloat(document.getElementById('score').value);
+      const requiresRecommendation = document.getElementById('requiresRecommendation').checked;
 
       if (!scholarshipName || scholarshipName === '請從獎學金列表選擇申請') {
         alert('請先選擇要申請的獎學金');
         return;
       }
 
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true;
+      btn.textContent = '送出中…';
+
       try {
         const response = await fetch(`${API_BASE}/applications`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             student_id: currentUser.id,
             scholarship_name: scholarshipName,
             gpa: gpa,
-            score: score
+            score: score,
+            requires_recommendation: requiresRecommendation ? 1 : 0
           })
         });
 
         const result = await response.json();
-        
+
         if (result.success) {
-          alert('✅ 申請已成功送出！');
+          const msg = requiresRecommendation
+            ? '✅ 申請已送出！申請將先由您的導師審核，請等候導師撰寫推薦信。'
+            : '✅ 申請已送出！系統已將申請轉交審查機構。';
+          alert(msg);
           window.location.href = 'student_results.html';
         } else {
           alert('❌ 申請失敗：' + (result.message || '請稍後再試'));
+          btn.disabled = false;
+          btn.textContent = '送出申請';
         }
       } catch (error) {
         console.error('提交申請錯誤:', error);
         alert('❌ 提交時發生錯誤，請檢查網路連線或稍後再試');
+        btn.disabled = false;
+        btn.textContent = '送出申請';
       }
     }
   </script>

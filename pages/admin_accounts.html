@@ -214,12 +214,16 @@
         </div>
         <div class="split">
           <div>
-            <label for="accountEmail">Email *</label>
-            <input type="email" id="accountEmail" name="email" placeholder="user@example.edu" required>
+            <label for="accountEmail">Email * <span style="color:var(--muted);font-weight:400;font-size:12px;">（僅限真實 Gmail）</span></label>
+            <input type="email" id="accountEmail" name="email"
+              placeholder="僅限輸入真實 Gmail（例：user@gmail.com）"
+              pattern="[a-zA-Z0-9._%+\-]+@gmail\.com"
+              title="Email 必須為 @gmail.com 格式"
+              required>
           </div>
           <div>
             <label for="accountType">角色 *</label>
-            <select id="accountType" name="type" required>
+            <select id="accountType" name="type" required onchange="onTypeChange()">
               <option value="">請選擇角色</option>
               <option value="Student">學生 (Student)</option>
               <option value="Teacher">教師 (Teacher)</option>
@@ -228,9 +232,52 @@
             </select>
           </div>
         </div>
+        <!-- 密碼欄位 -->
+        <div class="split">
+          <div>
+            <label for="accountPassword">預設密碼 *</label>
+            <input type="password" id="accountPassword" name="password" placeholder="設定初始登入密碼（至少 6 字）" minlength="6" required>
+            <p class="muted">使用者首次登入密碼，建議完成啟用後立即修改</p>
+          </div>
+          <div>
+            <label for="accountPasswordConfirm">確認密碼 *</label>
+            <input type="password" id="accountPasswordConfirm" name="passwordConfirm" placeholder="再次輸入密碼" minlength="6" required>
+          </div>
+        </div>
+        <!-- 科系選單：僅學生與教師顯示 -->
+        <div id="departmentGroup" style="display:none;">
+          <label for="accountDepartment">所屬科系 *</label>
+          <select id="accountDepartment" name="department">
+            <option value="">請選擇所屬科系</option>
+            <option value="西洋語文學系">西洋語文學系</option>
+            <option value="運動健康與休閒學系">運動健康與休閒學系</option>
+            <option value="工藝與創意設計學系">工藝與創意設計學系</option>
+            <option value="東亞語文學系">東亞語文學系</option>
+            <option value="運動競技學系">運動競技學系</option>
+            <option value="建築學系">建築學系</option>
+            <option value="法律學系">法律學系</option>
+            <option value="政治法律學系">政治法律學系</option>
+            <option value="財經法律學系">財經法律學系</option>
+            <option value="法學院博士班">法學院博士班</option>
+            <option value="應用數學系">應用數學系</option>
+            <option value="生命科學系">生命科學系</option>
+            <option value="應用物理學系">應用物理學系</option>
+            <option value="應用化學系">應用化學系</option>
+            <option value="統計學研究所">統計學研究所</option>
+            <option value="應用經濟學系">應用經濟學系</option>
+            <option value="亞太工商管理學系">亞太工商管理學系</option>
+            <option value="財務金融學系">財務金融學系</option>
+            <option value="資訊管理學系">資訊管理學系</option>
+            <option value="電機工程學系">電機工程學系</option>
+            <option value="土木與環境工程學系">土木與環境工程學系</option>
+            <option value="資訊工程學系">資訊工程學系</option>
+            <option value="化學工程及材料工程學系">化學工程及材料工程學系</option>
+          </select>
+          <p class="muted">學生與教師必須選擇所屬科系，以啟用科系隔離功能</p>
+        </div>
         <div class="actions" style="margin-top: 12px;">
           <button class="btn primary" type="submit">新增帳號</button>
-          <button class="btn" type="reset">清除</button>
+          <button class="btn" type="reset" onclick="onFormReset()">清除</button>
         </div>
       </form>
     </section>
@@ -246,12 +293,13 @@
               <th>帳號 ID</th>
               <th>姓名</th>
               <th>角色</th>
+              <th>科系</th>
               <th>Email</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody id="tableBody">
-            <tr><td colspan="5" style="text-align:center; color: var(--muted);">載入中...</td></tr>
+            <tr><td colspan="6" style="text-align:center; color: var(--muted);">載入中...</td></tr>
           </tbody>
         </table>
       </div>
@@ -266,31 +314,73 @@
     // 使用相對路徑，確保在 localhost 與 Tailscale IP 都可用
     const API_BASE = `/scholarship/api`;
 
-    // 新增帳號
+    // ── 角色變更：動態顯示/隱藏科系欄位 ───────────────────────
+    function onTypeChange() {
+      const type      = document.getElementById('accountType').value;
+      const needsDept = ['Student', 'Teacher'].includes(type);
+      const group     = document.getElementById('departmentGroup');
+      const select    = document.getElementById('accountDepartment');
+      group.style.display  = needsDept ? 'block' : 'none';
+      select.required      = needsDept;
+      if (!needsDept) select.value = '';
+    }
+
+    // ── 清除按鈕同步隱藏科系欄位 ───────────────────────────────
+    function onFormReset() {
+      document.getElementById('departmentGroup').style.display = 'none';
+      document.getElementById('accountDepartment').required    = false;
+      document.getElementById('accountDepartment').value       = '';
+      document.getElementById('accountPassword').value         = '';
+      document.getElementById('accountPasswordConfirm').value  = '';
+      document.getElementById('form-msg').innerHTML            = '';
+    }
+
+    // ── 新增帳號 ───────────────────────────────────────────────
     document.getElementById('accountForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const msgDiv = document.getElementById('form-msg');
       msgDiv.innerHTML = '';
 
-      const id = document.getElementById('accountId').value.trim();
-      const name = document.getElementById('accountName').value.trim();
-      const email = document.getElementById('accountEmail').value.trim();
-      const type = document.getElementById('accountType').value;
+      const id       = document.getElementById('accountId').value.trim();
+      const name     = document.getElementById('accountName').value.trim();
+      const email    = document.getElementById('accountEmail').value.trim();
+      const type     = document.getElementById('accountType').value;
+      const password = document.getElementById('accountPassword').value;
+      const passwordConfirm = document.getElementById('accountPasswordConfirm').value;
+      const department = ['Student', 'Teacher'].includes(type)
+        ? document.getElementById('accountDepartment').value
+        : null;
 
-      // 僅允許 @gmail.com、@example.com、@foundation.org 的合法 Email
-      const emailOk = /^[^@\s]+@(gmail\.com|example\.com|foundation\.org)$/i.test(email);
-      if (!emailOk) {
-        msgDiv.innerHTML = `<div class="error-msg">❌ Email 必須是 @gmail.com / @example.com / @foundation.org</div>`;
+      // 密碼長度驗證
+      if (password.length < 6) {
+        msgDiv.innerHTML = `<div class="error-msg">❌ 密碼至少需要 6 個字元</div>`;
+        return;
+      }
+
+      // 密碼確認比對
+      if (password !== passwordConfirm) {
+        msgDiv.innerHTML = `<div class="error-msg">❌ 兩次輸入的密碼不一致</div>`;
+        return;
+      }
+
+      // 學生/教師必須選擇科系
+      if (['Student', 'Teacher'].includes(type) && !department) {
+        msgDiv.innerHTML = `<div class="error-msg">❌ 請選擇所屬科系</div>`;
+        return;
+      }
+
+      // 後端會再次驗證；前端提前攔截提升體驗
+      const gmailOk = /^[a-zA-Z0-9._%+\-]+@gmail\.com$/.test(email);
+      if (!gmailOk) {
+        msgDiv.innerHTML = `<div class="error-msg">❌ Email 必須為 @gmail.com 格式（例：user@gmail.com）</div>`;
         return;
       }
 
       try {
         const response = await fetch(`${API_BASE}/user`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ id, name, email, type })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, name, email, type, department, password })
         });
 
         const data = await response.json();
@@ -298,9 +388,11 @@
         if (!response.ok || !data.success) {
           msgDiv.innerHTML = `<div class="error-msg">❌ ${data.message || '新增失敗'}</div>`;
         } else {
-          msgDiv.innerHTML = `<div class="success-msg">✓ 帳號已新增成功（預設密碼：${data.data.tempPassword}）</div>`;
+          const deptText = data.data.department ? `，科系：${data.data.department}` : '';
+          msgDiv.innerHTML = `<div class="success-msg">✓ 帳號已新增成功（預設密碼：${data.data.tempPassword}${deptText}）</div>`;
           document.getElementById('accountForm').reset();
-          setTimeout(() => { msgDiv.innerHTML = ''; loadAccounts(); }, 2000);
+          onFormReset();
+          setTimeout(() => { msgDiv.innerHTML = ''; loadAccounts(); }, 2500);
         }
       } catch (err) {
         msgDiv.innerHTML = `<div class="error-msg">❌ ${err.message}</div>`;
@@ -337,12 +429,12 @@
         const data = await response.json();
         
         if (!response.ok || !data.users) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--muted);">無法載入帳號</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--muted);">無法載入帳號</td></tr>';
           return;
         }
 
         if (data.users.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--muted);">暫無帳號</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--muted);">暫無帳號</td></tr>';
           return;
         }
 
@@ -351,6 +443,7 @@
             <td><strong>${user.id}</strong></td>
             <td>${user.name}</td>
             <td><span class="badge ${getRoleBadge(user.type)}">${getRoleLabel(user.type)}</span></td>
+            <td><small style="color:var(--muted);">${user.department || '—'}</small></td>
             <td><small>${user.email}</small></td>
             <td>
               <button class="btn danger" style="padding:6px 10px; font-size:12px;" onclick="deleteAccount('${user.id}')">刪除</button>

@@ -202,8 +202,10 @@
             </select>
           </div>
           <div id="privateTarget">
-            <label>指定對象 ID *</label>
-            <input type="text" id="postTargetId" placeholder="輸入對象的使用者 ID">
+            <label>指定對象 *</label>
+            <select id="postTargetSelect">
+              <option value="">— 請選擇對象 —</option>
+            </select>
           </div>
         </div>
         <div>
@@ -262,12 +264,32 @@
          <a href="/scholarship/pages/login.html">登出</a>`;
     }
 
-    // ── 可見度切換 ─────────────────────────────────────────────
+    // ── 可見度切換（Private 時懶載入使用者清單）──────────────────
     function onVisibilityChange() {
       const vis = document.getElementById('postVisibility').value;
       const target = document.getElementById('privateTarget');
       target.style.display = vis === 'Private' ? 'block' : 'none';
-      document.getElementById('postTargetId').required = vis === 'Private';
+      const sel = document.getElementById('postTargetSelect');
+      sel.required = vis === 'Private';
+      // 首次切到私密才載入清單
+      if (vis === 'Private' && sel.options.length <= 1) loadUserList();
+    }
+
+    // ── 載入非管理員使用者清單（供私密留言選取對象）─────────────
+    async function loadUserList() {
+      const sel = document.getElementById('postTargetSelect');
+      sel.innerHTML = '<option value="">— 載入中... —</option>';
+      try {
+        const res = await fetch(`${API_BASE}/users/list`);
+        const result = await res.json();
+        if (!result.success) throw new Error(result.message || '載入失敗');
+        sel.innerHTML = '<option value="">— 請選擇對象 —</option>' +
+          result.data.map(u =>
+            `<option value="${escHtml(u.id)}">${escHtml(u.name)}</option>`
+          ).join('');
+      } catch {
+        sel.innerHTML = '<option value="">— 載入失敗，請重新整理 —</option>';
+      }
     }
 
     // ── 發布留言 ───────────────────────────────────────────────
@@ -276,11 +298,11 @@
       const title      = document.getElementById('postTitle').value.trim();
       const content    = document.getElementById('postContent').value.trim();
       const visibility = document.getElementById('postVisibility').value;
-      const targetId   = document.getElementById('postTargetId').value.trim();
+      const targetId   = document.getElementById('postTargetSelect').value;
 
       if (!title || !content) { alert('請填寫標題與內容'); return; }
       if (visibility === 'Private' && !targetId) {
-        alert('私密留言請填寫指定對象 ID'); return;
+        alert('私密留言請選擇指定對象'); return;
       }
 
       const btn = event.submitter;

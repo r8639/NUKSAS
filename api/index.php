@@ -65,8 +65,149 @@ function normalize_identity($identity) {
     return $map[$identity] ?? $identity;
 }
 
+// ============================================================
+// 郵件發信模組（PHPMailer 優先，fallback error_log Mock）
+// config.php 需設定：SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS
+// ============================================================
+
+function sendEmail($to, $subject, $html) {
+    $ts = date('Y-m-d H:i:s');
+    $smtpHost = defined('SMTP_HOST') ? SMTP_HOST : (getenv('SMTP_HOST') ?: 'smtp.gmail.com');
+    $smtpPort = defined('SMTP_PORT') ? (int)SMTP_PORT : (int)(getenv('SMTP_PORT') ?: 587);
+    $smtpUser = defined('SMTP_USER') ? SMTP_USER : (getenv('SMTP_USER') ?: '');
+    $smtpPass = defined('SMTP_PASS') ? SMTP_PASS : (getenv('SMTP_PASS') ?: '');
+
+    // 嘗試 PHPMailer（需執行 composer require phpmailer/phpmailer）
+    $autoload = __DIR__ . '/../vendor/autoload.php';
+    if (!empty($smtpUser) && file_exists($autoload)) {
+        try {
+            require_once $autoload;
+            $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+            $mail->isSMTP();
+            $mail->SMTPDebug  = 2;                    // 詳細 SMTP 對話記錄
+            $mail->Debugoutput = 'error_log';         // 輸出到 Apache error log
+            $mail->Host       = $smtpHost;
+            $mail->SMTPAuth   = true;
+            $mail->Username   = $smtpUser;
+            $mail->Password   = $smtpPass;
+            $mail->SMTPSecure = PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+            $mail->Port       = $smtpPort;
+            $mail->CharSet    = 'UTF-8';
+            $mail->setFrom($smtpUser, 'ScholarLink');
+            $mail->addAddress($to);
+            $mail->isHTML(true);
+            $mail->Subject = $subject;
+            $mail->Body    = $html;
+            $mail->send();
+            error_log("[郵件] $ts ✓ 發信成功 → $to");
+            return true;
+        } catch (Exception $e) {
+            error_log("========== [PHP SMTP 發信失敗] ==========");
+            error_log("[郵件-SMTP失敗] $ts | 收件人:$to");
+            error_log("  ErrorInfo : " . $mail->ErrorInfo);
+            error_log("  Exception : " . $e->getMessage());
+            error_log("  SMTP_USER : $smtpUser");
+            error_log("  SMTP_PASS 長度 : " . strlen($smtpPass) . " 字元");
+            error_log("=========================================");
+        }
+    }
+
+    // Mock fallback：完整信件內容寫入 error_log，確保開發流程閉環
+    error_log("[郵件-Mock] $ts | 收件人:$to | 主旨:$subject | 內文:" . strip_tags($html));
+    return false;
+}
+
+function debugOTP(string $context, string $userId, string $otp): void {
+    error_log("========== [OTP DEBUG LOG] ==========");
+    error_log("  場景    : $context");
+    error_log("  帳號 ID : $userId");
+    error_log("  驗證碼  : $otp");
+    error_log("=====================================");
+}
+
+function generateOTP() {
+    return str_pad((string)random_int(100000, 999999), 6, '0', STR_PAD_LEFT);
+}
+
+// Gmail 嚴格格式正則（後端強制過濾）
+define('GMAIL_REGEX', '/^[a-zA-Z0-9._%+\-]+@gmail\.com$/');
+
+// ============================================================
+// 路由: POST /login - 登入驗證（LoginManager C002）
+// ============================================================
+if ($method === 'POST' && isset($segments[0]) && $segments[0] === 'login') {
+    $data = json_decode(file_get_contents('php://input'), true);
+    $id       = $data['id']       ?? null;
+    $password = $data['password'] ?? null;
+
+    if (!$id || !$password) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '請輸入帳號與密碼']);
+        exit();
+    }
+
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT id, name, email, type, password AS pwd, email_verified FROM User WHERE id = ? LIMIT 1'
+        );
+        $stmt->execute([$id]);
+        $user = $stmt->fetch();
+
+        if (!$user) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => '帳號或密碼錯誤']);
+            exit();
+        }
+
+        $passwordMatch = false;
+        if (!empty($user['pwd'])) {
+            // 標準路徑：bcrypt 比對
+            $passwordMatch = password_verify($password, $user['pwd']);
+        } else {
+            // 遷移路徑：舊帳號接受 {id}2025，並自動升級為雜湊
+            if ($password === $id . '2025') {
+                $passwordMatch = true;
+                $hash = password_hash($password, PASSWORD_DEFAULT);
+                $upd = $pdo->prepare('UPDATE User SET password = ? WHERE id = ?');
+                $upd->execute([$hash, $id]);
+            }
+        }
+
+        if (!$passwordMatch) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => '帳號或密碼錯誤']);
+            exit();
+        }
+
+        if (!$user['email_verified']) {
+            http_response_code(403);
+            echo json_encode([
+                'success'    => false,
+                'message'    => '請先完成電子郵件驗證',
+                'needVerify' => true,
+                'userId'     => $user['id']
+            ]);
+            exit();
+        }
+
+        echo json_encode([
+            'success' => true,
+            'data'    => [
+                'id'    => $user['id'],
+                'name'  => $user['name'],
+                'email' => $user['email'],
+                'type'  => $user['type']
+            ]
+        ]);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+    exit();
+}
+
 // 路由: GET /student/{id}
-if ($method === 'GET' && $segments[0] === 'student' && isset($segments[1]) && !isset($segments[2])) {
+else if ($method === 'GET' && $segments[0] === 'student' && isset($segments[1]) && !isset($segments[2])) {
     $studentId = $segments[1];
     
     try {
@@ -113,17 +254,19 @@ if ($method === 'GET' && $segments[0] === 'student' && isset($segments[1]) && !i
 // 路由: GET /student/{id}/applications
 else if ($method === 'GET' && $segments[0] === 'student' && isset($segments[1]) && isset($segments[2]) && $segments[2] === 'applications') {
     $studentId = $segments[1];
-    
+
     try {
         $stmt = $pdo->prepare("
-            SELECT 
+            SELECT
                 a.id,
                 a.apply_date,
                 a.scholarship_name,
                 s.amount,
                 a.apply_state,
                 a.score,
-                a.gpa
+                a.gpa,
+                a.requires_recommendation,
+                a.reject_reason
             FROM Application a
             JOIN Scholarship s ON a.scholarship_name = s.name
             WHERE a.student_id = ?
@@ -218,13 +361,16 @@ else if ($method === 'GET' && $segments[0] === 'scholarships' && !isset($segment
         $studentId = $_GET['student_id'] ?? null; // 學生ID用於身份過濾
         
         $sql = "
-            SELECT 
+            SELECT
                 s.name,
                 s.amount,
                 s.description,
                 s.is_published,
                 s.published_at,
                 s.identity_restriction,
+                s.start_date,
+                s.end_date,
+                s.required_documents,
                 GROUP_CONCAT(u.name SEPARATOR ', ') as organizations
             FROM Scholarship s
             LEFT JOIN Scholarship_Organization so ON s.name = so.scholarship_name
@@ -257,7 +403,7 @@ else if ($method === 'GET' && $segments[0] === 'scholarships' && !isset($segment
             }
         }
         
-        $sql .= " GROUP BY s.name, s.amount, s.description, s.is_published, s.published_at, s.identity_restriction";
+        $sql .= " GROUP BY s.name, s.amount, s.description, s.is_published, s.published_at, s.identity_restriction, s.start_date, s.end_date, s.required_documents";
         
         $stmt = $pdo->query($sql);
         $scholarships = $stmt->fetchAll();
@@ -377,9 +523,8 @@ else if ($method === 'GET' && $segments[0] === 'organization' && isset($segments
     $organizationId = $segments[1];
     
     try {
-        // 獲取所有申請（暫時返回所有申請，後續可以根據機構過濾）
         $stmt = $pdo->prepare("
-            SELECT 
+            SELECT
                 a.id,
                 a.student_id,
                 a.scholarship_name,
@@ -389,16 +534,20 @@ else if ($method === 'GET' && $segments[0] === 'organization' && isset($segments
                 a.gpa,
                 a.family_income,
                 s.amount,
-                u.name as student_name
+                u.name AS student_name
             FROM Application a
             JOIN Scholarship s ON a.scholarship_name = s.name
             LEFT JOIN Student st ON a.student_id = st.id
             LEFT JOIN User u ON st.id = u.id
+            WHERE a.apply_state IN ('pending_review', 'Under Review', 'Pending')
+              AND s.name IN (
+                SELECT scholarship_name FROM Scholarship_Organization WHERE organization_id = ?
+              )
             ORDER BY a.apply_date DESC
         ");
-        $stmt->execute();
+        $stmt->execute([$organizationId]);
         $applications = $stmt->fetchAll();
-        
+
         echo json_encode(['success' => true, 'data' => $applications]);
     } catch(PDOException $e) {
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
@@ -437,17 +586,19 @@ else if ($method === 'GET' && $segments[0] === 'organization' && isset($segments
 // 路由: GET /applications/{studentId}
 else if ($method === 'GET' && $segments[0] === 'applications' && isset($segments[1])) {
     $studentId = $segments[1];
-    
+
     try {
         $stmt = $pdo->prepare("
-            SELECT 
+            SELECT
                 a.id,
                 a.apply_date,
                 a.scholarship_name,
                 s.amount,
                 a.apply_state,
                 a.score,
-                a.gpa
+                a.gpa,
+                a.requires_recommendation,
+                a.reject_reason
             FROM Application a
             JOIN Scholarship s ON a.scholarship_name = s.name
             WHERE a.student_id = ?
@@ -516,26 +667,90 @@ else if (($method === 'PUT' || $method === 'POST') && $segments[0] === 'applicat
             exit();
         }
         
-        // 更新申請狀態
-        $stmt = $pdo->prepare("
-            UPDATE Application 
-            SET apply_state = ?
-            WHERE id = ?
+        $applyState = $data['apply_state'];
+        $reason     = $data['reason'] ?? null;
+
+        $validStates = ['Pending','Under Review','Approved','Rejected','pending_review','tutor_rejected','review_rejected'];
+        if (!in_array($applyState, $validStates)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => '無效的審查狀態']);
+            exit();
+        }
+
+        // 查詢申請詳情及學生 Email（用於後續通知）
+        $infoStmt = $pdo->prepare("
+            SELECT a.student_id, a.scholarship_name, u.email, u.name AS student_name
+            FROM Application a
+            JOIN User u ON a.student_id = u.id
+            WHERE a.id = ? LIMIT 1
         ");
-        $result = $stmt->execute([
-            $data['apply_state'],
-            $applicationId
-        ]);
-        
+        $infoStmt->execute([$applicationId]);
+        $appInfo = $infoStmt->fetch();
+
+        $isRejection = in_array($applyState, ['tutor_rejected', 'review_rejected']);
+
+        // 更新申請狀態（退件時一併寫入原因）
+        $stmt = $pdo->prepare("UPDATE Application SET apply_state = ?, reject_reason = ? WHERE id = ?");
+        $stmt->execute([$applyState, $isRejection ? ($reason ?? '') : null, $applicationId]);
+
         // 檢查是否有行被更新
         if ($stmt->rowCount() === 0) {
             echo json_encode(['success' => false, 'message' => '找不到指定的申請或狀態未變更', 'application_id' => $applicationId]);
             exit();
         }
-        
-        echo json_encode(['success' => true, 'message' => '審查結果已保存', 'updated_state' => $data['apply_state']]);
+
+        // 需通知的狀態
+        $notifyMap = ['Approved'=>'審核通過','Rejected'=>'審核不通過','tutor_rejected'=>'導師退件','review_rejected'=>'機構退件'];
+        if ($appInfo && isset($notifyMap[$applyState])) {
+            $stateLabel = $notifyMap[$applyState];
+            $stateColor = $applyState === 'Approved' ? '#22c55e' : '#ef4444';
+            $reasonHtml = $reason ? "<p><strong>審查意見：</strong>{$reason}</p>" : '';
+            $resubHtml  = $isRejection ? '<p>請登入系統查看退件說明並補件後重新提交。</p>' : '';
+            $emailHtml  = "
+              <div style='font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px;'>
+                <h2 style='color:#667eea;margin-top:0;'>ScholarLink 獎學金審查通知</h2>
+                <p>您好 <strong>{$appInfo['student_name']}</strong>，</p>
+                <p>您申請的 <strong>「{$appInfo['scholarship_name']}」</strong> 獎學金審查結果如下：</p>
+                <div style='font-size:24px;font-weight:bold;color:{$stateColor};padding:16px;background:#f5f5f5;border-radius:8px;text-align:center;'>{$stateLabel}</div>
+                {$reasonHtml}{$resubHtml}
+                <p style='color:#9ca3af;font-size:12px;margin-top:16px;'>如有疑問請透過校內系統聯繫相關單位。</p>
+              </div>
+            ";
+            sendEmail($appInfo['email'], "ScholarLink 獎學金審查通知：{$stateLabel}", $emailHtml);
+        }
+
+        echo json_encode(['success' => true, 'message' => '審查結果已保存', 'updated_state' => $applyState]);
     } catch(PDOException $e) {
         echo json_encode(['success' => false, 'message' => '數據庫錯誤: ' . $e->getMessage()]);
+    }
+}
+
+// 路由: POST /application/{id}/resubmit - 學生補件重新提交
+else if ($method === 'POST' && $segments[0] === 'application' && isset($segments[1]) && isset($segments[2]) && $segments[2] === 'resubmit') {
+    $applicationId = $segments[1];
+    try {
+        $stmt = $pdo->prepare("SELECT apply_state, requires_recommendation FROM Application WHERE id = ?");
+        $stmt->execute([$applicationId]);
+        $app = $stmt->fetch();
+        if (!$app) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '找不到指定的申請']);
+            exit();
+        }
+        if (!in_array($app['apply_state'], ['tutor_rejected', 'review_rejected'])) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => '目前狀態不可重新提交']);
+            exit();
+        }
+        $nextState = ($app['apply_state'] === 'tutor_rejected' || ($app['apply_state'] === 'review_rejected' && $app['requires_recommendation']))
+            ? 'pending_tutor'
+            : 'pending_review';
+
+        $upd = $pdo->prepare("UPDATE Application SET apply_state = ?, reject_reason = NULL WHERE id = ?");
+        $upd->execute([$nextState, $applicationId]);
+        echo json_encode(['success' => true, 'message' => '已重新提交，等待審查', 'next_state' => $nextState]);
+    } catch(PDOException $e) {
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
 }
 
@@ -573,21 +788,50 @@ else if ($method === 'POST' && $segments[0] === 'applications') {
             }
         }
         
+        // 取得獎學金必備文件設定
+        $schDocStmt = $pdo->prepare("SELECT required_documents FROM Scholarship WHERE name = ?");
+        $schDocStmt->execute([$data['scholarship_name']]);
+        $schDoc = $schDocStmt->fetch();
+
+        // 若有必備文件，驗證學生已上傳
+        if ($schDoc && !empty($schDoc['required_documents'])) {
+            $required = array_filter(array_map('trim', explode(',', $schDoc['required_documents'])));
+            if (!empty($required)) {
+                $docStmt = $pdo->prepare("SELECT DISTINCT file_category FROM Identity_Proof WHERE student_id = ?");
+                $docStmt->execute([$data['student_id']]);
+                $uploaded = array_column($docStmt->fetchAll(), 'file_category');
+                $missing = array_diff($required, $uploaded);
+                if (!empty($missing)) {
+                    $catLabels = ['identity_proof'=>'身份證明','transcript'=>'成績單','award_certificate'=>'參賽得獎'];
+                    $missingLabels = array_map(function($c) use ($catLabels){ return $catLabels[$c] ?? $c; }, $missing);
+                    http_response_code(400);
+                    echo json_encode(['success'=>false,'message'=>'申請前請先上傳必備文件：'.implode('、',$missingLabels)]);
+                    exit;
+                }
+            }
+        }
+
+        // 決定初始狀態
+        $requiresRec = !empty($data['requires_recommendation']) ? 1 : 0;
+        $initialState = $requiresRec ? 'pending_tutor' : 'pending_review';
+
         // 生成唯一的申請 ID
         $applicationId = 'APP' . round(microtime(true) * 1000);
-        
+
         $stmt = $pdo->prepare("
-            INSERT INTO Application (id, student_id, scholarship_name, apply_date, apply_state, score, gpa)
-            VALUES (?, ?, ?, NOW(), 'Pending', ?, ?)
+            INSERT INTO Application (id, student_id, scholarship_name, apply_date, apply_state, score, gpa, requires_recommendation)
+            VALUES (?, ?, ?, NOW(), ?, ?, ?, ?)
         ");
         $stmt->execute([
             $applicationId,
             $data['student_id'],
             $data['scholarship_name'],
+            $initialState,
             $data['score'],
-            $data['gpa']
+            $data['gpa'],
+            $requiresRec
         ]);
-        
+
         echo json_encode(['success' => true, 'message' => '申請提交成功', 'id' => $applicationId]);
     } catch(PDOException $e) {
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
@@ -745,7 +989,11 @@ else if ($method === 'PUT' && $segments[0] === 'scholarships' && isset($segments
             $updateFields[] = "identity_restriction = ?";
             $params[] = $data['identity_restriction'] ?: null;
         }
-        
+        if (isset($data['required_documents'])) {
+            $updateFields[] = "required_documents = ?";
+            $params[] = $data['required_documents'] ?: null;
+        }
+
         if (!empty($updateFields)) {
             $params[] = $scholarshipName;
             $sql = "UPDATE Scholarship SET " . implode(", ", $updateFields) . " WHERE name = ?";
@@ -816,45 +1064,80 @@ else if ($method === 'POST' && $segments[0] === 'recommendation' && !isset($segm
             $filePath
         ]);
         
-        // 更新申請的推薦信ID
+        // 更新申請的推薦信ID，並將狀態從 pending_tutor 推進至 pending_review
         if (isset($data['application_id'])) {
-            $stmt = $pdo->prepare("UPDATE Application SET recommendation_id = ? WHERE id = ?");
+            $stmt = $pdo->prepare("UPDATE Application SET recommendation_id = ?, apply_state = 'pending_review' WHERE id = ? AND apply_state = 'pending_tutor'");
             $stmt->execute([$recommendationId, $data['application_id']]);
         }
-        
+
         echo json_encode(['success' => true, 'data' => ['id' => $recommendationId, 'file_path' => $filePath]]);
     } catch(PDOException $e) {
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
 }
 
-// 路由: GET /teacher/{id}/applications - 取得教師需要寫推薦信的申請列表
+// 路由: GET /teacher/{id}/applications - 取得教師「本科系」學生的申請列表（科系隔離）
 else if ($method === 'GET' && $segments[0] === 'teacher' && isset($segments[1]) && isset($segments[2]) && $segments[2] === 'applications') {
     $teacherId = $segments[1];
-    
+
     try {
-        // 暫時返回所有申請，實際應該根據學生-教師關係
-        $stmt = $pdo->prepare("
-            SELECT 
-                a.id,
-                a.student_id,
-                u.name AS student_name,
-                a.scholarship_name,
-                a.apply_date,
-                a.gpa,
-                a.score,
-                a.recommendation_id,
-                r.content AS recommendation_content
-            FROM Application a
-            JOIN Student s ON a.student_id = s.id
-            JOIN User u ON s.id = u.id
-            LEFT JOIN Recommendation r ON a.recommendation_id = r.id
-            WHERE a.apply_state IN ('Pending', 'Under Review')
-            ORDER BY a.apply_date DESC
-        ");
-        $stmt->execute();
+        // 步驟一：查詢該導師的科系
+        $deptStmt = $pdo->prepare("SELECT department FROM User WHERE id = ? AND type = 'Teacher'");
+        $deptStmt->execute([$teacherId]);
+        $deptRow = $deptStmt->fetch();
+
+        $teacherDepartment = (!$deptRow || empty($deptRow['department'])) ? null : $deptRow['department'];
+
+        if ($teacherDepartment) {
+            $stmt = $pdo->prepare("
+                SELECT
+                    a.id,
+                    a.student_id,
+                    u.name       AS student_name,
+                    u.department AS student_department,
+                    a.scholarship_name,
+                    a.apply_date,
+                    a.apply_state,
+                    a.gpa,
+                    a.score,
+                    a.reject_reason,
+                    a.recommendation_id,
+                    r.content    AS recommendation_content
+                FROM Application a
+                JOIN Student s ON a.student_id = s.id
+                JOIN User u ON s.id = u.id
+                LEFT JOIN Recommendation r ON a.recommendation_id = r.id
+                WHERE a.apply_state = 'pending_tutor'
+                  AND u.department = ?
+                ORDER BY a.apply_date DESC
+            ");
+            $stmt->execute([$teacherDepartment]);
+        } else {
+            $stmt = $pdo->prepare("
+                SELECT
+                    a.id,
+                    a.student_id,
+                    u.name       AS student_name,
+                    u.department AS student_department,
+                    a.scholarship_name,
+                    a.apply_date,
+                    a.apply_state,
+                    a.gpa,
+                    a.score,
+                    a.reject_reason,
+                    a.recommendation_id,
+                    r.content    AS recommendation_content
+                FROM Application a
+                JOIN Student s ON a.student_id = s.id
+                JOIN User u ON s.id = u.id
+                LEFT JOIN Recommendation r ON a.recommendation_id = r.id
+                WHERE a.apply_state = 'pending_tutor'
+                ORDER BY a.apply_date DESC
+            ");
+            $stmt->execute();
+        }
         $applications = $stmt->fetchAll();
-        echo json_encode(['success' => true, 'data' => $applications]);
+        echo json_encode(['success' => true, 'data' => $applications, 'department' => $teacherDepartment, 'departmentFiltered' => !!$teacherDepartment]);
     } catch(PDOException $e) {
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
@@ -920,31 +1203,51 @@ else if ($method === 'POST' && $segments[0] === 'identity-proof' && !isset($segm
             exit();
         }
         
+        // 驗證並取得檔案類別（預設向後相容為 identity_proof）
+        $validCategories = ['identity_proof', 'transcript', 'award_certificate'];
+        $category = $_POST['category'] ?? 'identity_proof';
+        if (!in_array($category, $validCategories)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => '無效的檔案類別，限定：identity_proof / transcript / award_certificate']);
+            exit();
+        }
+        $fileMime = $file['type'];
+
         // 記錄到資料庫
         $stmt = $pdo->prepare("
-            INSERT INTO Identity_Proof (id, student_id, file_path, file_name, file_size, uploaded_at)
-            VALUES (?, ?, ?, ?, ?, NOW())
+            INSERT INTO Identity_Proof (id, student_id, file_path, file_name, file_size, file_category, file_mime, uploaded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
         ");
         $stmt->execute([
             $proofId,
             $studentId,
             '/scholarship/uploads/identity-proofs/' . $fileName,
             $file['name'],
-            $file['size']
+            $file['size'],
+            $category,
+            $fileMime
         ]);
-        
-        echo json_encode(['success' => true, 'message' => '檔案上傳成功', 'id' => $proofId]);
+
+        echo json_encode(['success' => true, 'message' => '檔案上傳成功', 'id' => $proofId, 'file_category' => $category, 'file_mime' => $fileMime]);
     } catch(Exception $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
 }
 
-// 路由: GET /identity-proof - 取得所有學生的身分證明檔案（管理員）
+// 路由: GET /identity-proof - 取得身分證明檔案清單（支援 ?studentId 過濾）
 else if ($method === 'GET' && $segments[0] === 'identity-proof' && !isset($segments[1])) {
     try {
-        $stmt = $pdo->query("
-            SELECT 
+        $conditions = [];
+        $params     = [];
+        if (!empty($_GET['studentId'])) {
+            $conditions[] = 'p.student_id = ?';
+            $params[]     = $_GET['studentId'];
+        }
+        $where = count($conditions) > 0 ? 'WHERE ' . implode(' AND ', $conditions) : '';
+
+        $stmt = $pdo->prepare("
+            SELECT
                 p.id,
                 p.student_id,
                 u.name AS student_name,
@@ -952,14 +1255,18 @@ else if ($method === 'GET' && $segments[0] === 'identity-proof' && !isset($segme
                 p.file_name,
                 p.file_size,
                 p.file_path,
+                COALESCE(p.file_category, 'identity_proof') AS file_category,
+                p.file_mime,
                 p.uploaded_at
             FROM Identity_Proof p
             JOIN Student s ON p.student_id = s.id
             JOIN User u ON s.id = u.id
+            $where
             ORDER BY p.uploaded_at DESC
         ");
+        $stmt->execute($params);
         $proofs = $stmt->fetchAll();
-        
+
         echo json_encode(['success' => true, 'data' => $proofs]);
     } catch(PDOException $e) {
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
@@ -1035,6 +1342,93 @@ else if ($method === 'DELETE' && $segments[0] === 'identity-proof' && isset($seg
     }
 }
 
+// 路由: GET /applications/:id/documents - 取得申請案佐證檔案（依分類打包）
+else if ($method === 'GET' && ($segments[0] ?? '') === 'applications' && isset($segments[1]) && ($segments[2] ?? '') === 'documents') {
+    $appId = $segments[1];
+    try {
+        $stmt = $pdo->prepare('SELECT student_id FROM Application WHERE id = ? LIMIT 1');
+        $stmt->execute([$appId]);
+        $app = $stmt->fetch();
+        if (!$app) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '找不到申請案']);
+            exit();
+        }
+        $studentId = $app['student_id'];
+
+        $stmt = $pdo->prepare("
+            SELECT id, student_id, file_path, file_name, file_size,
+                   COALESCE(file_category, 'identity_proof') AS file_category,
+                   file_mime, uploaded_at
+            FROM Identity_Proof
+            WHERE student_id = ?
+            ORDER BY file_category, uploaded_at DESC
+        ");
+        $stmt->execute([$studentId]);
+        $rows = $stmt->fetchAll();
+
+        $validCategories = ['identity_proof', 'transcript', 'award_certificate'];
+        $grouped = ['identity_proof' => [], 'transcript' => [], 'award_certificate' => []];
+        foreach ($rows as $r) {
+            $cat = in_array($r['file_category'], $validCategories) ? $r['file_category'] : 'identity_proof';
+            $grouped[$cat][] = $r;
+        }
+
+        echo json_encode(['success' => true, 'student_id' => $studentId, 'data' => $grouped]);
+    } catch(PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
+// 路由: GET /admin/documents - 管理員複合查詢佐證檔案
+else if ($method === 'GET' && ($segments[0] ?? '') === 'admin' && ($segments[1] ?? '') === 'documents') {
+    try {
+        $validCategories = ['identity_proof', 'transcript', 'award_certificate'];
+        $conditions = [];
+        $params     = [];
+
+        if (!empty($_GET['studentId'])) {
+            $conditions[] = 'ip.student_id = ?';
+            $params[]     = trim($_GET['studentId']);
+        }
+
+        if (!empty($_GET['categories'])) {
+            $catList = array_values(array_filter(
+                array_map('trim', explode(',', $_GET['categories'])),
+                function($c) use ($validCategories) { return in_array($c, $validCategories); }
+            ));
+            if (!empty($catList)) {
+                $placeholders = implode(',', array_fill(0, count($catList), '?'));
+                $conditions[] = "ip.file_category IN ($placeholders)";
+                $params = array_merge($params, $catList);
+            }
+        }
+
+        $where = count($conditions) > 0 ? 'WHERE ' . implode(' AND ', $conditions) : '';
+
+        $stmt = $pdo->prepare("
+            SELECT ip.id, ip.student_id, u.name AS student_name,
+                   ip.file_name, ip.file_size, ip.file_path,
+                   COALESCE(ip.file_mime, '')                    AS file_mime,
+                   COALESCE(ip.file_category, 'identity_proof') AS file_category,
+                   ip.uploaded_at
+            FROM Identity_Proof ip
+            JOIN Student s ON ip.student_id = s.id
+            JOIN User u ON s.id = u.id
+            $where
+            ORDER BY ip.uploaded_at DESC
+        ");
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll();
+
+        echo json_encode(['success' => true, 'data' => $rows]);
+    } catch(PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
 // 路由: POST /user - 新增帳號（管理員專用）
 else if ($method === 'POST' && $segments[0] === 'user' && !isset($segments[1])) {
     try {
@@ -1047,18 +1441,19 @@ else if ($method === 'POST' && $segments[0] === 'user' && !isset($segments[1])) 
             exit();
         }
         
-        $id = $input['id'] ?? null;
-        $name = $input['name'] ?? null;
-        $email = $input['email'] ?? null;
-        $type = $input['type'] ?? null;
-        
+        $id         = $input['id']         ?? null;
+        $name       = $input['name']       ?? null;
+        $email      = $input['email']      ?? null;
+        $type       = $input['type']       ?? null;
+        $department = $input['department'] ?? null;
+
         // 驗證必填欄位
         if (!$id || !$name || !$email || !$type) {
             http_response_code(400);
             echo json_encode(['success' => false, 'message' => '缺少必填欄位：id, name, email, type']);
             exit();
         }
-        
+
         // 驗證角色
         $validTypes = ['Student', 'Teacher', 'Organization', 'SystemAdministrator'];
         if (!in_array($type, $validTypes)) {
@@ -1066,7 +1461,26 @@ else if ($method === 'POST' && $segments[0] === 'user' && !isset($segments[1])) 
             echo json_encode(['success' => false, 'message' => '無效的角色']);
             exit();
         }
-        
+
+        // 嚴格 Gmail 格式驗證（後端強制）
+        if (!preg_match(GMAIL_REGEX, $email)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Email 必須為 @gmail.com 格式']);
+            exit();
+        }
+
+        // 學生與教師必須填寫科系
+        if (in_array($type, ['Student', 'Teacher']) && empty($department)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => '學生與教師帳號必須指定所屬科系']);
+            exit();
+        }
+
+        // 管理員與審查單位不需科系，強制為 null
+        if (in_array($type, ['SystemAdministrator', 'Organization'])) {
+            $department = null;
+        }
+
         // 檢查帳號是否已存在
         $stmt = $pdo->prepare("SELECT id FROM User WHERE id = ?");
         $stmt->execute([$id]);
@@ -1075,42 +1489,74 @@ else if ($method === 'POST' && $segments[0] === 'user' && !isset($segments[1])) 
             echo json_encode(['success' => false, 'message' => '帳號已存在']);
             exit();
         }
-        
-        // 產生預設密碼（例如：id+隨機碼）- 如果資料庫支援
-        $defaultPassword = password_hash($id . '2025', PASSWORD_BCRYPT);
-        
-        // 新增使用者
+
+        // 建立密碼：使用傳入密碼或自動產生隨機預設密碼
+        $rawPassword   = !empty($input['password']) ? $input['password']
+                         : ($id . strtoupper(substr(bin2hex(random_bytes(3)), 0, 4)) . '!');
+        $hashedPassword = password_hash($rawPassword, PASSWORD_DEFAULT);
+
+        // 生成 6 位數 OTP
+        $otp = generateOTP();
+        debugOTP('帳號啟用', $id, $otp);
+
+        // 新增使用者（含密碼、驗證狀態、OTP）
         $stmt = $pdo->prepare("
-            INSERT INTO User (id, name, email, type)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO User (id, name, email, type, department, password, email_verified, verification_code)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?)
         ");
-        $stmt->execute([$id, $name, $email, $type]);
-        
+        $stmt->execute([$id, $name, $email, $type, $department, $hashedPassword, $otp]);
+
         // 如果是學生，建立 Student 記錄
         if ($type === 'Student') {
             try {
-                $stmt = $pdo->prepare("
-                    INSERT INTO Student (id)
-                    VALUES (?)
-                ");
+                $stmt = $pdo->prepare("INSERT INTO Student (id) VALUES (?)");
                 $stmt->execute([$id]);
             } catch(PDOException $e) {
                 // Student 記錄可能已存在，忽略
             }
         }
-        
+
+        // 非同步發送帳號啟用驗證信（失敗時 Mock 寫入 error_log）
+        $emailHtml = "
+          <div style='font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px;'>
+            <h2 style='color:#667eea;margin-top:0;'>ScholarLink 帳號啟用驗證</h2>
+            <p>您好 <strong>{$name}</strong>，</p>
+            <p>您的帳號已由管理員建立，請輸入以下 <strong>6 位數驗證碼</strong>完成帳號啟用：</p>
+            <div style='font-size:36px;font-weight:bold;letter-spacing:10px;color:#764ba2;padding:20px;background:#f5f5f5;border-radius:8px;text-align:center;'>{$otp}</div>
+            <p style='margin-top:20px;'>帳號 ID：<code>{$id}</code><br>初始密碼：<code>{$rawPassword}</code></p>
+            <p style='color:#9ca3af;font-size:12px;margin-top:16px;'>此驗證碼僅使用一次，請登入後儘快修改密碼。</p>
+          </div>
+        ";
+        sendEmail($email, 'ScholarLink 帳號啟用驗證碼', $emailHtml);
+
         echo json_encode([
             'success' => true,
-            'message' => '帳號新增成功',
+            'message' => '帳號新增成功，驗證碼已寄送至 Email',
             'data' => [
-                'id' => $id,
-                'name' => $name,
-                'email' => $email,
-                'type' => $type,
-                'tempPassword' => $id . '2025'  // 返回預設密碼供管理員告知使用者
+                'id'          => $id,
+                'name'        => $name,
+                'email'       => $email,
+                'type'        => $type,
+                'department'  => $department,
+                'tempPassword' => $rawPassword
             ]
         ]);
     } catch(PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
+// 路由: GET /users/list - 取得非管理員使用者清單（供私密留言選取對象用）
+else if ($method === 'GET' && ($segments[0] ?? '') === 'users' && ($segments[1] ?? '') === 'list') {
+    try {
+        $stmt = $pdo->prepare(
+            "SELECT id, name FROM User WHERE type != 'SystemAdministrator' ORDER BY name ASC"
+        );
+        $stmt->execute();
+        $users = $stmt->fetchAll();
+        echo json_encode(['success' => true, 'data' => $users]);
+    } catch (PDOException $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
     }
@@ -1120,7 +1566,7 @@ else if ($method === 'POST' && $segments[0] === 'user' && !isset($segments[1])) 
 else if ($method === 'GET' && $segments[0] === 'users' && !isset($segments[1])) {
     try {
         $stmt = $pdo->prepare("
-            SELECT id, name, email, type
+            SELECT id, name, email, type, department
             FROM User
             ORDER BY id ASC
         ");
@@ -1132,6 +1578,143 @@ else if ($method === 'GET' && $segments[0] === 'users' && !isset($segments[1])) 
             'users' => $users
         ]);
     } catch(PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
+// 路由: POST /users/verify-otp - 核對 OTP，啟用帳號
+else if ($method === 'POST' && ($segments[0] ?? '') === 'users' && ($segments[1] ?? '') === 'verify-otp') {
+    $data = json_decode(file_get_contents('php://input'), true);
+    $id   = $data['id']   ?? null;
+    $code = $data['code'] ?? null;
+
+    if (!$id || !$code) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少 id 或 code 參數']);
+        exit();
+    }
+
+    try {
+        $stmt = $pdo->prepare('SELECT verification_code, email_verified FROM User WHERE id = ? LIMIT 1');
+        $stmt->execute([$id]);
+        $user = $stmt->fetch();
+
+        if (!$user) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '找不到使用者']);
+            exit();
+        }
+
+        if ($user['email_verified']) {
+            echo json_encode(['success' => true, 'message' => '帳號已驗證，無需重複驗證']);
+            exit();
+        }
+
+        if (empty($user['verification_code']) || $user['verification_code'] !== trim((string)$code)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => '驗證碼錯誤，請重新確認']);
+            exit();
+        }
+
+        $upd = $pdo->prepare('UPDATE User SET email_verified = 1, verification_code = NULL WHERE id = ?');
+        $upd->execute([$id]);
+
+        echo json_encode(['success' => true, 'message' => '電子郵件驗證成功，帳號已啟用']);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
+// 路由: POST /users/forgot-password - 請求密碼重設驗證碼
+else if ($method === 'POST' && ($segments[0] ?? '') === 'users' && ($segments[1] ?? '') === 'forgot-password') {
+    $data  = json_decode(file_get_contents('php://input'), true);
+    $id    = $data['id']    ?? null;
+    $email = $data['email'] ?? null;
+
+    if (!$id || !$email) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '請輸入帳號 ID 與 Email']);
+        exit();
+    }
+
+    try {
+        $stmt = $pdo->prepare('SELECT id, name, email FROM User WHERE id = ? AND email = ? LIMIT 1');
+        $stmt->execute([$id, trim($email)]);
+        $user = $stmt->fetch();
+
+        if (!$user) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '帳號 ID 與 Email 不吻合，請確認後再試']);
+            exit();
+        }
+
+        $otp = generateOTP();
+        debugOTP('密碼重設', $user['id'], $otp);
+        $upd = $pdo->prepare('UPDATE User SET verification_code = ? WHERE id = ?');
+        $upd->execute([$otp, $user['id']]);
+
+        $name     = $user['name'];
+        $emailHtml = "
+          <div style='font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px;'>
+            <h2 style='color:#667eea;margin-top:0;'>ScholarLink 密碼重設驗證</h2>
+            <p>您好 <strong>{$name}</strong>，</p>
+            <p>我們收到您的密碼重設請求，請輸入以下 <strong>6 位數驗證碼</strong>完成重設：</p>
+            <div style='font-size:36px;font-weight:bold;letter-spacing:10px;color:#764ba2;padding:20px;background:#f5f5f5;border-radius:8px;text-align:center;'>{$otp}</div>
+            <p style='color:#9ca3af;font-size:12px;margin-top:16px;'>若非本人操作，請忽略此郵件，您的密碼不會被更改。</p>
+          </div>
+        ";
+        sendEmail($user['email'], 'ScholarLink 密碼重設驗證碼', $emailHtml);
+
+        echo json_encode(['success' => true, 'message' => '驗證碼已寄送至您的 Gmail，請於 10 分鐘內完成重設']);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
+    }
+}
+
+// 路由: POST /users/reset-password - 核對驗證碼並更新密碼
+else if ($method === 'POST' && ($segments[0] ?? '') === 'users' && ($segments[1] ?? '') === 'reset-password') {
+    $data        = json_decode(file_get_contents('php://input'), true);
+    $id          = $data['id']          ?? null;
+    $code        = $data['code']        ?? null;
+    $newPassword = $data['newPassword'] ?? null;
+
+    if (!$id || !$code || !$newPassword) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '缺少必要參數']);
+        exit();
+    }
+    if (strlen($newPassword) < 6) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '新密碼至少需要 6 個字元']);
+        exit();
+    }
+
+    try {
+        $stmt = $pdo->prepare('SELECT verification_code FROM User WHERE id = ? LIMIT 1');
+        $stmt->execute([$id]);
+        $user = $stmt->fetch();
+
+        if (!$user) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '找不到使用者']);
+            exit();
+        }
+
+        if (empty($user['verification_code']) || $user['verification_code'] !== trim((string)$code)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => '驗證碼錯誤或已過期，請重新申請']);
+            exit();
+        }
+
+        $hashed = password_hash($newPassword, PASSWORD_DEFAULT);
+        $upd    = $pdo->prepare('UPDATE User SET password = ?, verification_code = NULL WHERE id = ?');
+        $upd->execute([$hashed, $id]);
+
+        echo json_encode(['success' => true, 'message' => '密碼重設成功，請使用新密碼登入']);
+    } catch (PDOException $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'message' => '資料庫錯誤：' . $e->getMessage()]);
     }
@@ -1266,7 +1849,8 @@ else if ($method === 'POST' && isset($segments[0]) && $segments[0] === 'messages
     }
 }
 
-// 路由: PUT /messages/{id}/reply - 回覆留言（智慧回覆權限防禦）
+// 路由: PUT /messages/{id}/reply - 回覆留言（支援單則及批量回覆）
+// 批量模式：body 傳入 message_ids: [...] 且 {id} 填任意佔位字串（如 'bulk'）
 else if ($method === 'PUT' && isset($segments[0]) && $segments[0] === 'messages' && isset($segments[1]) && ($segments[2] ?? '') === 'reply') {
     $messageId = $segments[1];
     $data = json_decode(file_get_contents('php://input'), true);
@@ -1277,16 +1861,7 @@ else if ($method === 'PUT' && isset($segments[0]) && $segments[0] === 'messages'
         exit;
     }
     try {
-        $stmt = $pdo->prepare("SELECT user_id FROM Message WHERE id = ?");
-        $stmt->execute([$messageId]);
-        $msgRow = $stmt->fetch();
-        if (!$msgRow) {
-            http_response_code(404);
-            echo json_encode(['success' => false, 'message' => '找不到指定留言']);
-            exit;
-        }
-        $messageOwnerId = $msgRow['user_id'];
-
+        // 驗證回覆者身份
         $stmt = $pdo->prepare("SELECT type FROM User WHERE id = ?");
         $stmt->execute([$data['reply_user_id']]);
         $userRow = $stmt->fetch();
@@ -1295,19 +1870,52 @@ else if ($method === 'PUT' && isset($segments[0]) && $segments[0] === 'messages'
             echo json_encode(['success' => false, 'message' => '找不到回覆者']);
             exit;
         }
-        $replyUserType = $userRow['type'];
+        $replyUserType  = $userRow['type'];
+        $isAdmin        = $replyUserType === 'SystemAdministrator';
+        $isTeacherOrOrg = $replyUserType === 'Teacher' || $replyUserType === 'Organization';
 
-        $isTeacherOrOrg  = $replyUserType === 'Teacher' || $replyUserType === 'Organization';
+        // ── 批量回覆模式（管理員專用）────────────────────────
+        if (isset($data['message_ids']) && is_array($data['message_ids']) && count($data['message_ids']) > 0) {
+            if (!$isAdmin) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'message' => '批量回覆僅限系統管理員操作']);
+                exit;
+            }
+            $successCount = 0;
+            $updateStmt = $pdo->prepare(
+                "UPDATE Message SET reply_content = ?, reply_user_id = ?, replied_at = NOW() WHERE id = ?"
+            );
+            foreach ($data['message_ids'] as $msgId) {
+                $checkStmt = $pdo->prepare("SELECT id FROM Message WHERE id = ?");
+                $checkStmt->execute([$msgId]);
+                if (!$checkStmt->fetch()) continue;
+                $updateStmt->execute([$data['reply_content'], $data['reply_user_id'], $msgId]);
+                $successCount++;
+            }
+            echo json_encode(['success' => true, 'message' => "已成功回覆 {$successCount} 則留言", 'count' => $successCount]);
+            exit;
+        }
+
+        // ── 單則回覆模式 ──────────────────────────────────────
+        $stmt = $pdo->prepare("SELECT user_id FROM Message WHERE id = ?");
+        $stmt->execute([$messageId]);
+        $msgRow = $stmt->fetch();
+        if (!$msgRow) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => '找不到指定留言']);
+            exit;
+        }
+        $messageOwnerId  = $msgRow['user_id'];
         $isOriginalAuthor = $data['reply_user_id'] === $messageOwnerId;
 
-        if (!$isTeacherOrOrg && !$isOriginalAuthor) {
+        if (!$isAdmin && !$isTeacherOrOrg && !$isOriginalAuthor) {
             http_response_code(403);
             echo json_encode(['success' => false, 'message' => '您沒有回覆此留言的權限']);
             exit;
         }
-        $stmt = $pdo->prepare("
-            UPDATE Message SET reply_content = ?, reply_user_id = ?, replied_at = NOW() WHERE id = ?
-        ");
+        $stmt = $pdo->prepare(
+            "UPDATE Message SET reply_content = ?, reply_user_id = ?, replied_at = NOW() WHERE id = ?"
+        );
         $stmt->execute([$data['reply_content'], $data['reply_user_id'], $messageId]);
         echo json_encode(['success' => true, 'message' => '回覆成功']);
     } catch (PDOException $e) {
@@ -1424,7 +2032,7 @@ else if ($method === 'POST' && isset($segments[0]) && $segments[0] === 'memos' &
     $title        = $data['title']         ?? null;
     $content      = $data['content']       ?? null;
     $priority     = $data['priority']      ?? '重要';
-    $status       = $data['status']        ?? '代辦';
+    $status       = '代辦'; // 新增備忘錄一律強制為代辦，不採用前端傳入值
     $reminderDate = $data['reminder_date'] ?? null;
 
     if (!$adminId || !$title) {

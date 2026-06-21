@@ -1,10 +1,10 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>系統管理員端 - ScholarLink</title>
-  <script src="../auth.js"></script>
+  <script src="auth.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Source+Sans+3:wght@400;600&display=swap');
     :root {
@@ -160,7 +160,7 @@
       <nav>
         <a href="admin_scholarships.html">獎助管理</a>
         <a href="admin_announcements.html">公告管理</a>
-        <a href="admin_identity_proof.html">身份文件管理</a>
+        <a href="admin_identity_proof.html">佐證檔案</a>
         <a href="admin_accounts.html">帳號管理</a>
         <a href="admin_messages.html">留言審查</a>
         <a href="admin_memos.html">備忘錄</a>
@@ -242,6 +242,21 @@
             <label>說明</label>
             <textarea id="scholarshipDescription" placeholder="申請條件、評分方式、補充資訊..."></textarea>
           </div>
+          <div>
+            <label>申請必備文件 <span style="color: var(--muted); font-weight: normal;">(選填)</span></label>
+            <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:normal;">
+                <input type="checkbox" value="identity_proof" class="req-doc-check" style="width:16px;height:16px;accent-color:var(--accent-strong);"> 身份證明
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:normal;">
+                <input type="checkbox" value="transcript" class="req-doc-check" style="width:16px;height:16px;accent-color:var(--accent-strong);"> 成績單
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:normal;">
+                <input type="checkbox" value="award_certificate" class="req-doc-check" style="width:16px;height:16px;accent-color:var(--accent-strong);"> 參賽得獎
+              </label>
+            </div>
+            <p class="muted" style="margin-top:6px;">勾選後，學生申請前須先上傳對應文件才能送出申請。</p>
+          </div>
           <div style="display:flex; gap:12px; align-items:center;">
             <label style="margin:0; display:flex; gap:8px; align-items:center;">
               <input type="checkbox" id="publishNow" style="width:auto;"> 建立後立即發放
@@ -254,6 +269,7 @@
           <p class="muted">1. 設定申請開始和截止日期，學生只能在此期間申請。</p>
           <p class="muted">2. 「建立後立即發放」會將獎學金狀態設為已發放，學生即可查看與申請。</p>
           <p class="muted">3. 機構 ID 可在「帳號管理」中查詢，格式通常如 ORG001。</p>
+          <p class="muted">4. 勾選必備文件後，學生須先上傳對應文件才能提交申請。</p>
         </div>
       </div>
     </section>
@@ -299,60 +315,20 @@
             <label>說明</label>
             <textarea id="editScholarshipDescription" placeholder="申請條件、評分方式、補充資訊..."></textarea>
           </div>
-          <div style="display:flex; gap:12px; align-items:center;">
-            <button class="btn primary" type="submit">儲存變更</button>
-            <button class="btn" type="button" onclick="cancelEdit()">取消</button>
-          </div>
-        </form>
-        <div class="card" style="background: rgba(255,255,255,0.02);">
-          <h4 style="margin:0 0 8px;">編輯說明</h4>
-          <p class="muted">1. 獎學金名稱建立後無法修改。</p>
-          <p class="muted">2. 修改提供機構 ID 可補充或更新獎學金的提供單位資訊。</p>
-          <p class="muted">3. 留空機構 ID 將移除該獎學金與機構的關聯。</p>
-        </div>
-      </div>
-    </section>
-
-    <section id="edit-scholarship" class="card" style="display:none;">
-      <div class="section-title">編輯獎助學金 <span class="pill">Edit</span></div>
-      <div class="split">
-        <form id="editForm" onsubmit="updateScholarship(event)">
-          <input type="hidden" id="editScholarshipName">
           <div>
-            <label>獎助名稱</label>
-            <input type="text" id="editScholarshipNameDisplay" disabled style="background:#333; cursor:not-allowed;">
-            <p class="muted">獎學金名稱不可修改</p>
-          </div>
-          <div>
-            <label>金額 (NT$) *</label>
-            <input type="number" id="editScholarshipAmount" required min="0" placeholder="20000">
-          </div>
-          <div>
-            <label>申請開始日期 *</label>
-            <input type="date" id="editStartDate" required>
-          </div>
-          <div>
-            <label>申請截止日期 *</label>
-            <input type="date" id="editEndDate" required>
-          </div>
-          <div>
-            <label>提供機構 ID（選填）</label>
-            <input type="text" id="editOrganizationId" placeholder="例如：ORG001">
-            <p class="muted">若填寫，系統會更新獎學金與機構的關聯。留空則移除關聯。</p>
-          </div>
-          <div>
-            <label>身份限制 <span style="color: var(--muted); font-weight: normal;">(選填)</span></label>
-            <select id="editIdentityRestriction" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background: var(--card); color: var(--text); font-size:14px;">
-              <option value="">無限制（一般獎學金，所有學生可申請）</option>
-              <option value="原住民">原住民專用</option>
-              <option value="清寒">清寒專用</option>
-              <option value="僑生">僑生專用</option>
-              <option value="身心障礙">身心障礙專用</option>
-            </select>
-          </div>
-          <div>
-            <label>說明</label>
-            <textarea id="editScholarshipDescription" placeholder="申請條件、評分方式、補充資訊..."></textarea>
+            <label>申請必備文件 <span style="color: var(--muted); font-weight: normal;">(選填)</span></label>
+            <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:normal;">
+                <input type="checkbox" value="identity_proof" class="edit-req-doc-check" style="width:16px;height:16px;accent-color:var(--accent-strong);"> 身份證明
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:normal;">
+                <input type="checkbox" value="transcript" class="edit-req-doc-check" style="width:16px;height:16px;accent-color:var(--accent-strong);"> 成績單
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:normal;">
+                <input type="checkbox" value="award_certificate" class="edit-req-doc-check" style="width:16px;height:16px;accent-color:var(--accent-strong);"> 參賽得獎
+              </label>
+            </div>
+            <p class="muted" style="margin-top:6px;">勾選後，學生申請前須先上傳對應文件才能送出申請。</p>
           </div>
           <div style="display:flex; gap:12px; align-items:center;">
             <button class="btn primary" type="submit">儲存變更</button>
@@ -376,13 +352,11 @@
   <script>
     const API_BASE = '/scholarship/api';
     let currentUser = null;
-    
-    // 頁面載入時獲取獎學金列表
+
     async function loadScholarships() {
       try {
         const response = await fetch(`${API_BASE}/scholarships?admin=true`);
         const result = await response.json();
-        
         if (result.success) {
           displayScholarships(result.data);
         } else {
@@ -393,30 +367,24 @@
         showError('載入失敗');
       }
     }
-    
-    // 顯示獎學金列表
+
     function displayScholarships(scholarships) {
       const tbody = document.getElementById('scholarshipTableBody');
-      
       if (scholarships.length === 0) {
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--muted);">尚無獎學金資料</td></tr>';
         return;
       }
-      
       tbody.innerHTML = scholarships.map(s => {
         const isPublished = s.is_published == 1;
         const statusColor = isPublished ? 'var(--accent-strong)' : 'var(--muted)';
         const statusText = isPublished ? '已發放' : '未發放';
         const identityText = s.identity_restriction ? s.identity_restriction : '一般（無限制）';
-        
-        // 顯示申請期間
         let dateRange = '-';
         if (s.start_date && s.end_date) {
           const start = new Date(s.start_date).toLocaleDateString('zh-TW');
           const end = new Date(s.end_date).toLocaleDateString('zh-TW');
           dateRange = `${start} ~ ${end}`;
         }
-        
         return `
           <tr>
             <td>${s.name}</td>
@@ -427,7 +395,7 @@
             <td style="color: ${statusColor};">${statusText}</td>
             <td>
               <button class="btn" style="padding:6px 10px; font-size:12px; background:var(--accent); cursor:pointer;" onclick="editScholarship('${s.name}')">編輯</button>
-              ${isPublished 
+              ${isPublished
                 ? `<button class="btn danger" style="padding:6px 10px; font-size:12px; cursor:pointer;" onclick="unpublishScholarship('${s.name}')">下架</button>`
                 : `<button class="btn primary" style="padding:6px 10px; font-size:12px; cursor:pointer;" onclick="publishScholarship('${s.name}')">發放</button>`
               }
@@ -437,25 +405,19 @@
         `;
       }).join('');
     }
-    
-    // 發放獎學金
+
     async function publishScholarship(name) {
-      if (!confirm(`確定要發放「${name}」嗎？\n發放後學生將可以看到並申請此獎學金。`)) {
-        return;
-      }
-      
+      if (!confirm(`確定要發放「${name}」嗎？\n發放後學生將可以看到並申請此獎學金。`)) return;
       try {
         const response = await fetch(`${API_BASE}/scholarships/${encodeURIComponent(name)}/publish`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ admin_id: currentUser?.id })
         });
-        
         const result = await response.json();
-        
         if (result.success) {
           alert('✓ 獎學金已成功發放！');
-          loadScholarships(); // 重新載入列表
+          loadScholarships();
         } else {
           alert('❌ 發放失敗：' + result.message);
         }
@@ -464,24 +426,18 @@
         alert('❌ 發放失敗，請檢查網路連線');
       }
     }
-    
-    // 下架獎學金
+
     async function unpublishScholarship(name) {
-      if (!confirm(`確定要下架「${name}」嗎？\n下架後學生將無法看到此獎學金。`)) {
-        return;
-      }
-      
+      if (!confirm(`確定要下架「${name}」嗎？\n下架後學生將無法看到此獎學金。`)) return;
       try {
         const response = await fetch(`${API_BASE}/scholarships/${encodeURIComponent(name)}/unpublish`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
-        
         const result = await response.json();
-        
         if (result.success) {
           alert('✓ 獎學金已下架');
-          loadScholarships(); // 重新載入列表
+          loadScholarships();
         } else {
           alert('❌ 下架失敗：' + result.message);
         }
@@ -491,10 +447,8 @@
       }
     }
 
-    // 建立新獎學金
     async function createScholarship(event) {
       event.preventDefault();
-
       const name = document.getElementById('scholarshipName').value.trim();
       const amount = parseFloat(document.getElementById('scholarshipAmount').value);
       const startDate = document.getElementById('startDate').value;
@@ -503,21 +457,11 @@
       const description = document.getElementById('scholarshipDescription').value.trim();
       const identityRestriction = document.getElementById('identityRestriction').value.trim();
       const publishNow = document.getElementById('publishNow').checked;
+      const requiredDocs = [...document.querySelectorAll('.req-doc-check:checked')].map(el => el.value);
 
-      if (!name || Number.isNaN(amount)) {
-        alert('請輸入完整的獎學金名稱與金額');
-        return;
-      }
-
-      if (!startDate || !endDate) {
-        alert('請選擇申請開始和截止日期');
-        return;
-      }
-
-      if (new Date(startDate) > new Date(endDate)) {
-        alert('開始日期不能晚於截止日期');
-        return;
-      }
+      if (!name || Number.isNaN(amount)) { alert('請輸入完整的獎學金名稱與金額'); return; }
+      if (!startDate || !endDate) { alert('請選擇申請開始和截止日期'); return; }
+      if (new Date(startDate) > new Date(endDate)) { alert('開始日期不能晚於截止日期'); return; }
 
       try {
         const response = await fetch(`${API_BASE}/scholarships`, {
@@ -532,12 +476,11 @@
             organization_id: organizationId || null,
             identity_restriction: identityRestriction || null,
             publish: publishNow,
-            admin_id: currentUser?.id
+            admin_id: currentUser?.id,
+            required_documents: requiredDocs.length > 0 ? requiredDocs.join(',') : null
           })
         });
-
         const result = await response.json();
-
         if (response.ok && result.success) {
           alert('✓ 獎學金建立成功');
           document.getElementById('createForm').reset();
@@ -551,17 +494,12 @@
         alert('❌ 建立失敗，請檢查網路連線');
       }
     }
-    
-    // 刪除獎學金
+
     async function deleteScholarship(name) {
       if (!confirm(`確定要刪除「${name}」嗎？\n此操作將無法復原。`)) return;
-
       try {
-        const response = await fetch(`${API_BASE}/scholarships/${encodeURIComponent(name)}`, {
-          method: 'DELETE'
-        });
+        const response = await fetch(`${API_BASE}/scholarships/${encodeURIComponent(name)}`, { method: 'DELETE' });
         const result = await response.json().catch(() => ({ success: response.ok }));
-
         if (response.ok && result.success !== false) {
           alert('✓ 已刪除');
           loadScholarships();
@@ -574,44 +512,34 @@
       }
     }
 
-    // 編輯獎學金 - 載入資料到表單
     async function editScholarship(name) {
       try {
-        // 從當前列表中找到該獎學金
         const response = await fetch(`${API_BASE}/scholarships?admin=true`);
         const result = await response.json();
-        
-        if (!result.success) {
-          alert('❌ 無法載入獎學金資料');
-          return;
-        }
-        
+        if (!result.success) { alert('❌ 無法載入獎學金資料'); return; }
         const scholarship = result.data.find(s => s.name === name);
-        if (!scholarship) {
-          alert('❌ 找不到該獎學金');
-          return;
-        }
-        
-        // 填入表單
+        if (!scholarship) { alert('❌ 找不到該獎學金'); return; }
+
         document.getElementById('editScholarshipName').value = scholarship.name;
         document.getElementById('editScholarshipNameDisplay').value = scholarship.name;
         document.getElementById('editScholarshipAmount').value = scholarship.amount;
-        document.getElementById('editStartDate').value = scholarship.start_date || '';
-        document.getElementById('editEndDate').value = scholarship.end_date || '';
+        document.getElementById('editStartDate').value = scholarship.start_date ? scholarship.start_date.split('T')[0] : '';
+        document.getElementById('editEndDate').value = scholarship.end_date ? scholarship.end_date.split('T')[0] : '';
         document.getElementById('editScholarshipDescription').value = scholarship.description || '';
         document.getElementById('editIdentityRestriction').value = scholarship.identity_restriction || '';
-        
-        // 機構 ID 需要從後端查詢（暫時留空，因為 API 只返回機構名稱）
         document.getElementById('editOrganizationId').value = '';
-        document.getElementById('editOrganizationId').placeholder = scholarship.organizations 
-          ? `目前關聯：${scholarship.organizations}` 
+        document.getElementById('editOrganizationId').placeholder = scholarship.organizations
+          ? `目前關聯：${scholarship.organizations}`
           : '例如：ORG001';
-        
-        // 顯示編輯表單，隱藏新增表單
+
+        // 填入必備文件勾選狀態
+        const existingDocs = (scholarship.required_documents || '').split(',').map(s => s.trim()).filter(Boolean);
+        document.querySelectorAll('.edit-req-doc-check').forEach(cb => {
+          cb.checked = existingDocs.includes(cb.value);
+        });
+
         document.getElementById('add-scholarship').style.display = 'none';
         document.getElementById('edit-scholarship').style.display = 'block';
-        
-        // 滾動到編輯表單
         document.getElementById('edit-scholarship').scrollIntoView({ behavior: 'smooth' });
       } catch (error) {
         console.error('Error:', error);
@@ -619,10 +547,8 @@
       }
     }
 
-    // 更新獎學金
     async function updateScholarship(event) {
       event.preventDefault();
-
       const name = document.getElementById('editScholarshipName').value;
       const amount = parseFloat(document.getElementById('editScholarshipAmount').value);
       const startDate = document.getElementById('editStartDate').value;
@@ -630,21 +556,11 @@
       const organizationId = document.getElementById('editOrganizationId').value.trim();
       const description = document.getElementById('editScholarshipDescription').value.trim();
       const identityRestriction = document.getElementById('editIdentityRestriction').value.trim();
+      const requiredDocs = [...document.querySelectorAll('.edit-req-doc-check:checked')].map(el => el.value);
 
-      if (!name || Number.isNaN(amount)) {
-        alert('請輸入完整資料');
-        return;
-      }
-
-      if (!startDate || !endDate) {
-        alert('請選擇申請開始和截止日期');
-        return;
-      }
-
-      if (new Date(startDate) > new Date(endDate)) {
-        alert('開始日期不能晚於截止日期');
-        return;
-      }
+      if (!name || Number.isNaN(amount)) { alert('請輸入完整資料'); return; }
+      if (!startDate || !endDate) { alert('請選擇申請開始和截止日期'); return; }
+      if (new Date(startDate) > new Date(endDate)) { alert('開始日期不能晚於截止日期'); return; }
 
       try {
         const response = await fetch(`${API_BASE}/scholarships/${encodeURIComponent(name)}`, {
@@ -656,12 +572,11 @@
             end_date: endDate,
             description,
             organization_id: organizationId || '',
-            identity_restriction: identityRestriction || null
+            identity_restriction: identityRestriction || null,
+            required_documents: requiredDocs.length > 0 ? requiredDocs.join(',') : null
           })
         });
-
         const result = await response.json();
-
         if (response.ok && result.success) {
           alert('✓ 獎學金更新成功');
           cancelEdit();
@@ -675,20 +590,17 @@
       }
     }
 
-    // 取消編輯
     function cancelEdit() {
       document.getElementById('edit-scholarship').style.display = 'none';
       document.getElementById('add-scholarship').style.display = 'block';
       document.getElementById('editForm').reset();
     }
-    
-    // 顯示錯誤
+
     function showError(message) {
       const tbody = document.getElementById('scholarshipTableBody');
       tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color: #f87171;">${message}</td></tr>`;
     }
-    
-    // 頁面載入完成後執行
+
     document.addEventListener('DOMContentLoaded', () => {
       currentUser = checkAuth(['SystemAdministrator']);
       if (!currentUser) return;
@@ -697,4 +609,3 @@
   </script>
 </body>
 </html>
-

@@ -82,21 +82,25 @@
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;">載入失敗</td></tr>';
         return;
       }
-      const pending = result.data.filter(a => a.apply_state==='Pending' || a.apply_state==='Under Review');
+      const pending = result.data.filter(a =>
+        a.apply_state === 'pending_review' || a.apply_state === 'Under Review' || a.apply_state === 'Pending'
+      );
       if(pending.length===0){
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;">沒有待審核申請</td></tr>';
         return;
       }
+      const STATE_LABELS = { pending_review:'待審核', Pending:'待審核', 'Under Review':'審查中' };
       tbody.innerHTML = pending.map(a=>{
         const date = a.apply_date ? new Date(a.apply_date).toLocaleDateString('zh-TW') : '-';
         const statusClass = a.apply_state==='Under Review'?'review':'pending';
+        const stateText = STATE_LABELS[a.apply_state] || a.apply_state;
         return `<tr>
           <td>${a.id}</td>
           <td>${a.student_name||'未知'}<br><span class="muted">${a.student_id||''}</span></td>
           <td>${a.scholarship_name}</td>
           <td>${date}</td>
           <td>${a.gpa||'-'}</td>
-          <td><span class="status ${statusClass}">${a.apply_state==='Under Review'?'審查中':'待審'}</span></td>
+          <td><span class="status ${statusClass}">${stateText}</span></td>
           <td>
             <a class="btn view" href="/scholarship/pages/organization_review.html?id=${encodeURIComponent(a.id)}" aria-label="檢視申請 ${a.id}">
               <span class="icon">🔎</span>

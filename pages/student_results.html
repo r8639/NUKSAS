@@ -126,9 +126,14 @@
     tr:nth-child(even) { background: rgba(255,255,255,0.02); }
     tr:hover { background: rgba(34,211,238,0.05); }
     .status { padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; display: inline-block; }
-    .status.review { background: rgba(59,130,246,0.18); color: #93c5fd; }
-    .status.pass { background: rgba(34,197,94,0.18); color: #86efac; }
-    .status.fail { background: rgba(248,113,113,0.2); color: #fecdd3; }
+    .status.review    { background: rgba(59,130,246,0.18); color: #93c5fd; }
+    .status.pass      { background: rgba(34,197,94,0.18);  color: #86efac; }
+    .status.fail      { background: rgba(248,113,113,0.2); color: #fecdd3; }
+    .status.tutor     { background: rgba(251,191,36,0.2);  color: #fbbf24; }
+    .status.rejected-back { background: rgba(239,68,68,0.2); color: #fca5a5; }
+    .reason-box { margin-top:6px; padding:8px 10px; border-radius:8px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); font-size:12px; color:#fca5a5; }
+    .btn-resubmit { padding:6px 12px; border-radius:8px; border:1px solid rgba(251,191,36,0.5); background:rgba(251,191,36,0.12); color:#fbbf24; cursor:pointer; font-size:12px; font-weight:700; margin-top:6px; display:inline-block; }
+    .btn-resubmit:hover { background:rgba(251,191,36,0.25); }
     .muted { color: var(--muted); font-size: 13px; }
     footer { margin-top: 40px; color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0 40px; }
     @media (max-width: 720px) {
@@ -167,7 +172,7 @@
               <th>獎助名稱</th>
               <th>申請日期</th>
               <th>金額</th>
-              <th>狀態</th>
+              <th>狀態 / 說明</th>
               <th>成績</th>
               <th>GPA</th>
             </tr>
@@ -195,20 +200,43 @@
 
     const API_BASE = '/scholarship/api';
 
+    const STATE_LABELS = {
+      'Pending':       '待審核',
+      'Approved':      '已通過',
+      'Rejected':      '未通過',
+      'Under Review':  '審查中',
+      'pending_tutor': '待導師審核',
+      'pending_review':'待機構審核',
+      'tutor_rejected':'導師退件',
+      'review_rejected':'機構退件'
+    };
+
     function stateLabel(state) {
-      const labels = {
-        'Pending': '待審核',
-        'Approved': '已通過',
-        'Rejected': '未通過',
-        'Under Review': '審查中'
-      };
-      return labels[state] || state;
+      return STATE_LABELS[state] || state;
     }
 
     function stateClass(state) {
       if (state === 'Approved') return 'pass';
       if (state === 'Rejected') return 'fail';
+      if (state === 'tutor_rejected' || state === 'review_rejected') return 'rejected-back';
+      if (state === 'pending_tutor') return 'tutor';
       return 'review';
+    }
+
+    async function resubmit(appId) {
+      if (!confirm('確定要重新提交此申請？')) return;
+      try {
+        const res = await fetch(`${API_BASE}/application/${appId}/resubmit`, { method: 'POST' });
+        const result = await res.json();
+        if (result.success) {
+          alert('✅ 已重新提交！' + (result.next_state === 'pending_tutor' ? '申請將再次送往導師審核。' : '申請已轉交機構審查。'));
+          loadApplications();
+        } else {
+          alert('❌ 重新提交失敗：' + result.message);
+        }
+      } catch(e) {
+        alert('❌ 發生錯誤：' + e.message);
+      }
     }
 
     function renderApplications(items) {
@@ -220,14 +248,25 @@
       body.innerHTML = items.map(app => {
         const date = app.apply_date ? new Date(app.apply_date).toLocaleDateString('zh-TW') : '-';
         const amount = app.amount ? '$' + parseInt(app.amount).toLocaleString() : '-';
-        const state = stateLabel(app.apply_state);
-        const stateStyle = stateClass(app.apply_state);
+        const label = stateLabel(app.apply_state);
+        const cls = stateClass(app.apply_state);
+        const isRejected = app.apply_state === 'tutor_rejected' || app.apply_state === 'review_rejected';
+        const reasonHtml = isRejected && app.reject_reason
+          ? `<div class="reason-box">退件說明：${app.reject_reason}</div>`
+          : '';
+        const resubBtn = isRejected
+          ? `<button class="btn-resubmit" onclick="resubmit('${app.id}')">重新提交</button>`
+          : '';
         return `
           <tr>
             <td>${app.scholarship_name || '-'}</td>
             <td>${date}</td>
             <td>${amount}</td>
-            <td><span class="status ${stateStyle}">${state}</span></td>
+            <td>
+              <span class="status ${cls}">${label}</span>
+              ${reasonHtml}
+              ${resubBtn}
+            </td>
             <td>${app.score || '-'}</td>
             <td>${app.gpa || '-'}</td>
           </tr>

@@ -3,248 +3,242 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>身分文件管理 - ScholarLink</title>
-  <script src="../auth.js"></script>
+  <title>佐證檔案管理 - ScholarLink</title>
+  <script src="auth.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Source+Sans+3:wght@400;600&display=swap');
     :root {
-      --bg: #0f172a;
-      --card: #111827;
-      --surface: #0b1220;
-      --accent: #7dd3fc;
-      --accent-strong: #22d3ee;
-      --text: #e5e7eb;
-      --muted: #9ca3af;
-      --border: #1f2937;
-      --shadow: 0 24px 60px rgba(0,0,0,0.35);
-      --radius: 14px;
+      --bg: #0f172a; --card: #111827; --surface: #0b1220;
+      --accent: #7dd3fc; --accent-strong: #22d3ee;
+      --text: #e5e7eb; --muted: #9ca3af; --border: #1f2937;
+      --shadow: 0 24px 60px rgba(0,0,0,0.35); --radius: 14px;
       --success: #22c55e;
     }
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: 'Source Sans 3', system-ui, -apple-system, sans-serif;
-      background: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.06), transparent 25%),
-                  radial-gradient(circle at 80% 10%, rgba(14,165,233,0.07), transparent 26%),
-                  radial-gradient(circle at 50% 80%, rgba(56,189,248,0.05), transparent 30%),
+    body { margin:0; font-family:'Source Sans 3',system-ui,-apple-system,sans-serif;
+      background: radial-gradient(circle at 20% 20%,rgba(56,189,248,0.06),transparent 25%),
+                  radial-gradient(circle at 80% 10%,rgba(14,165,233,0.07),transparent 26%),
+                  radial-gradient(circle at 50% 80%,rgba(56,189,248,0.05),transparent 30%),
                   var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-    }
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      backdrop-filter: blur(12px);
-      background: rgba(15,23,42,0.8);
-      border-bottom: 1px solid var(--border);
-    }
-    .nav {
-      max-width: 1200px;
-      margin: 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 22px;
-    }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      font-family: 'Space Grotesk', sans-serif;
-    }
-    .brand .dot {
-      width: 12px; height: 12px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-      box-shadow: 0 0 18px rgba(125,211,252,0.6);
-    }
-    nav a {
-      color: var(--muted);
-      text-decoration: none;
-      margin-left: 18px;
-      font-weight: 600;
-      transition: color 0.2s ease;
-    }
-    nav a:hover { color: var(--accent-strong); }
-    .container { max-width: 1400px; margin: 0 auto; padding: 24px 22px 60px; }
-    .card {
-      background: linear-gradient(145deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-      box-shadow: var(--shadow);
-    }
-    .section-title {
-      font-family: 'Space Grotesk', sans-serif;
-      font-size: 20px;
-      font-weight: 700;
-      margin: 0 0 16px;
-    }
-    .hero {
-      margin: 0 0 20px;
-      padding: 26px;
-      border-radius: 16px;
-      background: linear-gradient(120deg, rgba(14,165,233,0.25), rgba(8,47,73,0.65)),
-                  linear-gradient(180deg, rgba(15,23,42,0.9), rgba(15,23,42,0.8));
-      border: 1px solid rgba(125,211,252,0.35);
-      box-shadow: var(--shadow);
-    }
-    .hero h1 { margin: 0; font-size: 28px; }
-    .hero p { margin: 8px 0 0; color: var(--muted); }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
-    th { background: rgba(255,255,255,0.04); font-weight: 700; font-size: 13px; }
-    tr:hover { background: rgba(34,211,238,0.05); }
-    .btn {
-      padding: 8px 12px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      color: var(--text);
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: inline-block;
-    }
-    .btn:hover { border-color: var(--accent-strong); color: var(--accent-strong); }
-    .btn.success { background: rgba(34,197,94,0.15); color: var(--success); border-color: rgba(34,197,94,0.3); }
-    .loading { text-align: center; padding: 40px; color: var(--muted); }
-    .badge {
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: 600;
-      display: inline-block;
-    }
-    .badge.general { background: rgba(107,114,128,0.2); color: #d1d5db; }
-    .badge.special { background: rgba(34,211,238,0.2); color: var(--accent-strong); }
-    footer { margin-top: 40px; color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0; }
+      color: var(--text); line-height: 1.6; }
+    header { position:sticky;top:0;z-index:10;backdrop-filter:blur(12px);background:rgba(15,23,42,0.8);border-bottom:1px solid var(--border); }
+    .nav { max-width:1400px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:14px 22px; }
+    .brand { display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.5px;font-family:'Space Grotesk',sans-serif; }
+    .brand .dot { width:12px;height:12px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-strong));box-shadow:0 0 18px rgba(125,211,252,0.6); }
+    nav a { color:var(--muted);text-decoration:none;margin-left:18px;font-weight:600;transition:color .2s; }
+    nav a:hover { color:var(--accent-strong); }
+    .container { max-width:1400px;margin:0 auto;padding:24px 22px 60px; }
+    .card { background:linear-gradient(145deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));border:1px solid var(--border);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-bottom:20px; }
+    .section-title { font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:700;margin:0 0 16px; }
+    .hero { margin:0 0 20px;padding:26px;border-radius:16px;background:linear-gradient(120deg,rgba(14,165,233,0.25),rgba(8,47,73,0.65)),linear-gradient(180deg,rgba(15,23,42,0.9),rgba(15,23,42,0.8));border:1px solid rgba(125,211,252,0.35);box-shadow:var(--shadow); }
+    .hero h1 { margin:0;font-size:28px; }
+    .hero p { margin:8px 0 0;color:var(--muted); }
+    /* Filter form */
+    .filter-grid { display:grid;grid-template-columns:1fr auto;gap:14px;align-items:end; }
+    .filter-left { display:grid;grid-template-columns:1fr 1fr;gap:14px; }
+    label { font-size:13px;font-weight:600;display:block;margin-bottom:5px;color:var(--muted); }
+    input[type="text"] { width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px; }
+    input[type="text"]:focus { outline:none;border-color:var(--accent-strong); }
+    .checkbox-group { display:flex;flex-wrap:wrap;gap:10px;margin-top:6px; }
+    .checkbox-item { display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px; }
+    .checkbox-item input { width:16px;height:16px;accent-color:var(--accent-strong);cursor:pointer; }
+    /* Table */
+    table { width:100%;border-collapse:collapse; }
+    th,td { padding:12px 10px;text-align:left;border-bottom:1px solid var(--border); }
+    th { background:rgba(255,255,255,0.04);font-weight:700;font-size:13px; }
+    tr:hover { background:rgba(34,211,238,0.04); }
+    .btn { padding:7px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:12px;font-weight:600;transition:all .2s;display:inline-block;text-decoration:none; }
+    .btn:hover { border-color:var(--accent-strong);color:var(--accent-strong); }
+    .btn.primary { background:linear-gradient(120deg,var(--accent),var(--accent-strong));color:#0b1220;border:none; }
+    .btn.preview { background:rgba(34,211,238,0.15);color:var(--accent-strong);border-color:rgba(34,211,238,0.3); }
+    .cat-badge { padding:3px 8px;border-radius:5px;font-size:11px;font-weight:700;display:inline-block; }
+    .cat-identity_proof   { background:rgba(34,211,238,0.2);color:#22d3ee; }
+    .cat-transcript        { background:rgba(34,197,94,0.2);color:#4ade80; }
+    .cat-award_certificate { background:rgba(251,191,36,0.2);color:#fbbf24; }
+    .loading { text-align:center;padding:40px;color:var(--muted); }
+    footer { margin-top:40px;color:var(--muted);font-size:13px;text-align:center;padding:20px 0; }
+    /* Preview Modal */
+    #previewModal { display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.88);z-index:9999;align-items:center;justify-content:center;padding:16px; }
+    .preview-box { background:#111827;border:1px solid #1f2937;border-radius:16px;padding:20px;max-width:960px;width:100%;max-height:92vh;overflow:auto; }
+    .preview-header { display:flex;justify-content:space-between;align-items:center;margin-bottom:14px; }
+    .preview-header span { font-weight:700;color:#e5e7eb;font-size:14px;word-break:break-all;flex:1;margin-right:10px; }
+    .preview-close { background:rgba(239,68,68,0.2);color:#fca5a5;border:1px solid rgba(239,68,68,0.35);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;flex-shrink:0; }
   </style>
 </head>
 <body>
   <header>
     <div class="nav">
-      <div class="brand"><span class="dot"></span>ScholarLink <span style="font-size:14px; color: var(--accent-strong); margin-left:8px;">系統管理員</span></div>
+      <div class="brand"><span class="dot"></span>ScholarLink <span style="font-size:14px;color:var(--accent-strong);margin-left:8px;">系統管理員</span></div>
       <nav>
         <a href="admin_scholarships.html">獎助管理</a>
         <a href="admin_announcements.html">公告管理</a>
-        <a href="admin_identity_proof.html">身分文件管理</a>
+        <a href="admin_identity_proof.html">佐證檔案</a>
         <a href="admin_accounts.html">帳號管理</a>
         <a href="admin_messages.html">留言審查</a>
         <a href="admin_memos.html">備忘錄</a>
-        <a href="/scholarship/pages/login.html" onclick="logout(); return false;">登出</a>
+        <a href="/scholarship/pages/login.html" onclick="logout();return false;">登出</a>
       </nav>
     </div>
   </header>
 
   <div class="container">
     <section class="hero">
-      <h1>📄 身分文件管理</h1>
-      <p>檢視和下載學生上傳的身分證明文件（低收証明、身障手冊、僑生居留證等）</p>
+      <h1>📁 佐證檔案管理</h1>
+      <p>複合篩選查詢學生上傳的佐證文件（身份證明、成績單、參賽得獎），支援線上預覽。</p>
     </section>
 
+    <!-- 複合篩選表單 -->
     <section class="card">
-      <div class="section-title">所有學生的身分文件</div>
+      <div class="section-title">🔍 複合篩選</div>
+      <div class="filter-grid">
+        <div class="filter-left">
+          <div>
+            <label for="searchStudentId">學生 ID 關鍵字</label>
+            <input type="text" id="searchStudentId" placeholder="輸入學號（如 S001）或留空查詢全部">
+          </div>
+          <div>
+            <label>檔案類別（可複選）</label>
+            <div class="checkbox-group">
+              <label class="checkbox-item">
+                <input type="checkbox" value="identity_proof" checked> 身份證明
+              </label>
+              <label class="checkbox-item">
+                <input type="checkbox" value="transcript" checked> 成績單
+              </label>
+              <label class="checkbox-item">
+                <input type="checkbox" value="award_certificate" checked> 參賽得獎
+              </label>
+            </div>
+          </div>
+        </div>
+        <div>
+          <button class="btn primary" onclick="queryDocuments()" style="padding:10px 22px;">查詢</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 結果表格 -->
+    <section class="card">
+      <div class="section-title">查詢結果</div>
       <div style="overflow-x:auto;">
-        <table id="proofTable">
+        <table>
           <thead>
             <tr>
-              <th>學號</th>
-              <th>學生名稱</th>
-              <th>身份別</th>
+              <th>學生 ID</th>
+              <th>姓名</th>
+              <th>類別</th>
               <th>檔案名稱</th>
-              <th>檔案大小</th>
+              <th>大小</th>
               <th>上傳時間</th>
               <th>操作</th>
             </tr>
           </thead>
-          <tbody id="proofTableBody">
-            <tr>
-              <td colspan="7" style="text-align:center; padding:40px; color: var(--muted);">載入中...</td>
-            </tr>
+          <tbody id="docTableBody">
+            <tr><td colspan="7" class="loading">請設定篩選條件並按「查詢」</td></tr>
           </tbody>
         </table>
       </div>
     </section>
   </div>
 
-  <footer>
-    ScholarLink 系統管理員端 © 2026
-  </footer>
+  <footer>ScholarLink 系統管理員端 © 2026</footer>
+
+  <!-- 預覽 Modal -->
+  <div id="previewModal">
+    <div class="preview-box">
+      <div class="preview-header">
+        <span id="previewTitle"></span>
+        <button class="preview-close" onclick="closePreview()">✕ 關閉</button>
+      </div>
+      <div id="previewContainer"></div>
+    </div>
+  </div>
 
   <script>
     const API_BASE = '/scholarship/api';
-    let currentUser = null;
 
-    // 檢查認證
-    currentUser = checkAuth(['SystemAdministrator']);
-    if (!currentUser) {
-      throw new Error('Unauthorized');
+    const currentUser = checkAuth(['SystemAdministrator']);
+    if (!currentUser) throw new Error('Unauthorized');
+
+    const CAT_LABELS = { identity_proof: '身份證明', transcript: '成績單', award_certificate: '參賽得獎' };
+
+    function guessMime(filePath) {
+      const ext = (filePath || '').split('.').pop().toLowerCase();
+      return { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', pdf:'application/pdf' }[ext] || '';
     }
 
-    // 載入身分證明文件列表
-    async function loadIdentityProofs() {
+    function previewFile(filePath, fileMime, fileName) {
+      const mime = fileMime || guessMime(filePath);
+      document.getElementById('previewTitle').textContent = fileName;
+      const c = document.getElementById('previewContainer');
+      if (mime.startsWith('image/')) {
+        c.innerHTML = `<img src="${filePath}" alt="${fileName}" style="max-width:100%;max-height:72vh;border-radius:8px;display:block;margin:auto;">`;
+      } else if (mime === 'application/pdf') {
+        c.innerHTML = `<iframe src="${filePath}" style="width:100%;height:72vh;border:none;border-radius:8px;"></iframe>`;
+      } else {
+        c.innerHTML = `<p style="color:#9ca3af;">無法直接預覽此格式。<a href="${filePath}" target="_blank" style="color:#22d3ee;">點此在新分頁開啟</a></p>`;
+      }
+      document.getElementById('previewModal').style.display = 'flex';
+    }
+
+    function closePreview() {
+      document.getElementById('previewModal').style.display = 'none';
+      document.getElementById('previewContainer').innerHTML = '';
+    }
+
+    async function queryDocuments() {
+      const studentId  = document.getElementById('searchStudentId').value.trim();
+      const checked    = [...document.querySelectorAll('.checkbox-group input:checked')].map(el => el.value);
+      const tbody      = document.getElementById('docTableBody');
+
+      tbody.innerHTML  = '<tr><td colspan="7" class="loading">查詢中...</td></tr>';
+
+      const params = new URLSearchParams();
+      if (studentId) params.set('studentId', studentId);
+      if (checked.length > 0 && checked.length < 3) params.set('categories', checked.join(','));
+
       try {
-        const response = await fetch(`${API_BASE}/identity-proof`);
-        const result = await response.json();
+        const res    = await fetch(`${API_BASE}/admin/documents?${params}`);
+        const result = await res.json();
 
         if (!result.success) {
-          showError('無法載入文件列表');
+          tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#f87171;padding:20px;">${result.message||'查詢失敗'}</td></tr>`;
           return;
         }
 
-        displayProofs(result.data || []);
-      } catch (error) {
-        console.error('Error:', error);
-        showError('載入失敗');
+        const rows = result.data || [];
+        if (rows.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px;">無符合條件的檔案</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = rows.map(p => {
+          const date    = new Date(p.uploaded_at).toLocaleDateString('zh-TW');
+          const sizeKB  = (p.file_size / 1024).toFixed(1);
+          const catKey  = p.file_category || 'identity_proof';
+          const catLabel = CAT_LABELS[catKey] || catKey;
+          const fileMime = p.file_mime || guessMime(p.file_path);
+          return `
+            <tr>
+              <td>${p.student_id}</td>
+              <td>${p.student_name || '-'}</td>
+              <td><span class="cat-badge cat-${catKey}">${catLabel}</span></td>
+              <td style="max-width:220px;word-break:break-all;">${p.file_name}</td>
+              <td>${sizeKB} KB</td>
+              <td>${date}</td>
+              <td style="display:flex;gap:6px;">
+                <button class="btn preview" onclick="previewFile('${p.file_path}','${fileMime}','${p.file_name}')">預覽</button>
+                <a class="btn" href="${p.file_path}" download>下載</a>
+              </td>
+            </tr>`;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:#f87171;padding:20px;">載入失敗：${err.message}</td></tr>`;
       }
     }
 
-    // 顯示檔案列表
-    function displayProofs(proofs) {
-      const tbody = document.getElementById('proofTableBody');
-
-      if (proofs.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--muted); padding:20px;">目前沒有上傳的身分證明文件</td></tr>';
-        return;
-      }
-
-      tbody.innerHTML = proofs.map(p => {
-        const uploadDate = new Date(p.uploaded_at).toLocaleDateString('zh-TW');
-        const fileSizeKB = (p.file_size / 1024).toFixed(1);
-        const badgeClass = p.identity === '一般生' ? 'general' : 'special';
-        
-        return `
-          <tr>
-            <td>${p.student_id}</td>
-            <td>${p.student_name}</td>
-            <td><span class="badge ${badgeClass}">${p.identity}</span></td>
-            <td>${p.file_name}</td>
-            <td>${fileSizeKB} KB</td>
-            <td>${uploadDate}</td>
-            <td>
-              <a class="btn success" href="${p.file_path}" download>下載</a>
-            </td>
-          </tr>
-        `;
-      }).join('');
-    }
-
-    // 顯示錯誤
-    function showError(message) {
-      const tbody = document.getElementById('proofTableBody');
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color: #f87171; padding:20px;">${message}</td></tr>`;
-    }
-
-    // 頁面載入完成後執行
-    document.addEventListener('DOMContentLoaded', () => {
-      loadIdentityProofs();
-    });
+    // 頁面載入時自動查詢全部
+    document.addEventListener('DOMContentLoaded', queryDocuments);
   </script>
 </body>
 </html>

@@ -316,7 +316,7 @@
         <option value="沒那麼重要">🔵 沒那麼重要</option>
       </select>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="statusGroup">
       <label>狀態</label>
       <select id="inputStatus">
         <option value="代辦" selected>代辦</option>
@@ -464,8 +464,10 @@
     document.getElementById('inputTitle').value  = '';
     document.getElementById('inputContent').value= '';
     document.getElementById('inputPriority').value = '重要';
-    document.getElementById('inputStatus').value   = '代辦';
+    document.getElementById('inputStatus').value   = '代辦'; // 新增時強制預設代辦
     document.getElementById('inputReminder').value = '';
+    // 新增時不允許手動選擇狀態，隱藏狀態欄位
+    document.getElementById('statusGroup').style.display = 'none';
     document.getElementById('memoModal').classList.add('open');
   }
 
@@ -477,6 +479,8 @@
     document.getElementById('inputPriority').value     = memo.priority || '重要';
     document.getElementById('inputStatus').value       = memo.status   || '代辦';
     document.getElementById('inputReminder').value     = memo.reminder_date || '';
+    // 編輯時恢復顯示狀態欄位，讓管理員可自由切換
+    document.getElementById('statusGroup').style.display = '';
     document.getElementById('memoModal').classList.add('open');
   }
 

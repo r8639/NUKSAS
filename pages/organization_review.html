@@ -27,6 +27,20 @@
     .actions{display:flex;gap:12px}
     .btn{padding:11px 16px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--text);text-decoration:none;font-weight:700;font-family:'Space Grotesk',sans-serif;letter-spacing:.2px}
     .btn.primary{background:linear-gradient(120deg,var(--accent),var(--accent-strong));color:#0b1220;border:none}
+    .cat-section{margin-bottom:14px;}
+    .cat-header{font-size:12px;font-weight:700;padding:4px 10px;border-radius:6px;display:inline-block;margin-bottom:8px;}
+    .cat-identity_proof{background:rgba(34,211,238,0.2);color:#22d3ee;}
+    .cat-transcript{background:rgba(34,197,94,0.2);color:#4ade80;}
+    .cat-award_certificate{background:rgba(251,191,36,0.2);color:#fbbf24;}
+    .doc-item{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;margin-bottom:5px;font-size:13px;}
+    .btn.sm-preview{padding:5px 10px;font-size:11px;background:rgba(34,211,238,0.15);color:var(--accent-strong);border-color:rgba(34,211,238,0.3);}
+    .btn.danger{background:rgba(239,68,68,0.15);color:#fca5a5;border-color:rgba(239,68,68,0.35);}
+    .btn.danger:hover{background:rgba(239,68,68,0.25);}
+    #previewModal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.88);z-index:9999;align-items:center;justify-content:center;padding:16px;}
+    .preview-box{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:20px;max-width:960px;width:100%;max-height:92vh;overflow:auto;}
+    .preview-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+    #rejectModal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;padding:16px;}
+    .modal-box{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:24px;max-width:480px;width:100%;}
   </style>
 </head>
 <body>
@@ -56,13 +70,20 @@
           <div id="recommendContent" style="color:var(--text);line-height:1.7;white-space:pre-wrap;"></div>
         </div>
       </div>
-      
+
+      <!-- 佐證檔案區：依分類顯示 -->
+      <div class="card" id="docsCard">
+        <h4 style="margin:0 0 12px;">📎 學生佐證檔案</h4>
+        <div id="docsContent"><p class="muted" style="font-size:13px;">載入中...</p></div>
+      </div>
+
       <form class="card" id="reviewForm">
         <input type="hidden" id="applicationId" />
         <div>
           <label>審查結果</label>
           <select id="decision" required>
             <option value="">請選擇</option>
+            <option value="Under Review">設為審查中</option>
             <option value="Approved">通過</option>
             <option value="Rejected">不通過</option>
           </select>
@@ -73,6 +94,7 @@
         </div>
         <div class="actions">
           <button class="btn" type="button" onclick="resetForm()">重置</button>
+          <button class="btn danger" type="button" onclick="openRejectModal()">退件補件</button>
           <button class="btn primary" type="submit">送出審查結果</button>
         </div>
       </form>
@@ -110,14 +132,75 @@
       }catch(e){ document.getElementById('summary').textContent='載入失敗'; }
 
       document.getElementById('reviewForm').addEventListener('submit', submitReview);
+
+      // 載入佐證檔案
+      loadApplicationDocuments(id);
     }
+
+    const CAT_LABELS = { identity_proof: '身份證明', transcript: '成績單', award_certificate: '參賽得獎' };
+
+    function guessMime(fp) {
+      const ext = (fp||'').split('.').pop().toLowerCase();
+      return {jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',pdf:'application/pdf'}[ext]||'';
+    }
+
+    function previewFile(filePath, fileMime, fileName) {
+      const mime = fileMime || guessMime(filePath);
+      document.getElementById('previewTitle').textContent = fileName;
+      const c = document.getElementById('previewContainer');
+      if (mime.startsWith('image/')) {
+        c.innerHTML = `<img src="${filePath}" alt="${fileName}" style="max-width:100%;max-height:72vh;border-radius:8px;display:block;margin:auto;">`;
+      } else if (mime === 'application/pdf') {
+        c.innerHTML = `<iframe src="${filePath}" style="width:100%;height:72vh;border:none;border-radius:8px;"></iframe>`;
+      } else {
+        c.innerHTML = `<p style="color:#9ca3af;">無法直接預覽。<a href="${filePath}" target="_blank" style="color:#22d3ee;">點此在新分頁開啟</a></p>`;
+      }
+      document.getElementById('previewModal').style.display = 'flex';
+    }
+
+    function closePreview() {
+      document.getElementById('previewModal').style.display = 'none';
+      document.getElementById('previewContainer').innerHTML = '';
+    }
+
+    async function loadApplicationDocuments(appId) {
+      const docsDiv = document.getElementById('docsContent');
+      try {
+        const res    = await fetch(`${API_BASE}/applications/${appId}/documents`);
+        const result = await res.json();
+        if (!result.success) { docsDiv.innerHTML = '<p class="muted" style="font-size:13px;">無法載入佐證檔案</p>'; return; }
+
+        const groups = result.data;
+        const allEmpty = Object.values(groups).every(g => g.length === 0);
+        if (allEmpty) { docsDiv.innerHTML = '<p class="muted" style="font-size:13px;">學生尚未上傳任何佐證檔案</p>'; return; }
+
+        docsDiv.innerHTML = Object.entries(groups).map(([cat, files]) => {
+          if (files.length === 0) return '';
+          return `
+            <div class="cat-section">
+              <div class="cat-header cat-${cat}">${CAT_LABELS[cat]||cat}（${files.length} 件）</div>
+              ${files.map(f => {
+                const fileMime = f.file_mime || guessMime(f.file_path);
+                return `<div class="doc-item">
+                  <span style="color:#e5e7eb;">${f.file_name}</span>
+                  <button class="btn sm-preview" onclick="previewFile('${f.file_path}','${fileMime}','${f.file_name}')">線上預覽</button>
+                </div>`;
+              }).join('')}
+            </div>`;
+        }).join('');
+      } catch(e) {
+        docsDiv.innerHTML = '<p style="color:#f87171;font-size:13px;">載入失敗</p>';
+      }
+    }
+
     async function submitReview(e){
       e.preventDefault();
       const id = document.getElementById('applicationId').value;
       const user = checkAuth(['Organization']); if(!user) return;
       const apply_state = document.getElementById('decision').value;
       if(!apply_state){ alert('請選擇審查結果'); return; }
-      const payload = { apply_state };
+      const comment = document.getElementById('comment').value.trim();
+      const payload = { apply_state, reason: comment || undefined };
       const res = await fetch(`${API_BASE}/application/${id}/review`, { method:'POST', headers:{'Content-Type':'application/json','X-HTTP-Method-Override':'PUT'}, body: JSON.stringify(payload)});
       const result = await res.json();
       if(result.success){
@@ -127,8 +210,67 @@
         alert('更新失敗: '+result.message);
       }
     }
+
+    function openRejectModal(){
+      document.getElementById('rejectReason').value = '';
+      document.getElementById('rejectModal').style.display = 'flex';
+    }
+    function closeRejectModal(){
+      document.getElementById('rejectModal').style.display = 'none';
+    }
+    async function submitReject(){
+      const reason = document.getElementById('rejectReason').value.trim();
+      if(!reason){ alert('請填寫退件原因'); return; }
+      const id = document.getElementById('applicationId').value;
+      if(!id){ closeRejectModal(); return; }
+      try{
+        const res = await fetch(`${API_BASE}/application/${id}/review`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json','X-HTTP-Method-Override':'PUT'},
+          body: JSON.stringify({ apply_state: 'review_rejected', reason })
+        });
+        const result = await res.json();
+        if(result.success){
+          closeRejectModal();
+          alert('已退件，系統將通知學生補件。');
+          location.href = '/scholarship/pages/organization_applications.html';
+        } else {
+          alert('退件失敗：' + result.message);
+        }
+      }catch(e){
+        alert('退件失敗：' + e.message);
+      }
+    }
+
     function resetForm(){ document.getElementById('reviewForm').reset(); }
     document.addEventListener('DOMContentLoaded', init);
   </script>
+
+  <!-- 退件補件 Modal -->
+  <div id="rejectModal">
+    <div class="modal-box">
+      <h3 style="color:#fca5a5;margin:0 0 14px;">退件補件</h3>
+      <p class="muted">請填寫退件原因（必填），系統將通知學生補件後重新提交。</p>
+      <div style="margin:14px 0;">
+        <label>退件原因</label>
+        <textarea id="rejectReason" placeholder="說明需要補充的資料或退件說明…" style="min-height:80px;margin-top:8px;"></textarea>
+      </div>
+      <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button class="btn" onclick="closeRejectModal()">取消</button>
+        <button class="btn danger" onclick="submitReject()">確認退件</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 預覽 Modal -->
+  <div id="previewModal">
+    <div class="preview-box">
+      <div class="preview-header">
+        <span id="previewTitle" style="font-weight:700;color:#e5e7eb;font-size:14px;word-break:break-all;flex:1;margin-right:10px;"></span>
+        <button onclick="closePreview()" style="background:rgba(239,68,68,0.2);color:#fca5a5;border:1px solid rgba(239,68,68,0.35);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;flex-shrink:0;">✕ 關閉</button>
+      </div>
+      <div id="previewContainer"></div>
+    </div>
+  </div>
 </body>
 </html>
